@@ -2,15 +2,10 @@
 
 const Particulate = (() => {
 
-  // ── Canvas setup ──────────────────────────────────────────────────────────
   const canvas = document.getElementById('pd-canvas');
   const ctx    = canvas.getContext('2d');
   let beakerImg = null;
 
-  // Image is 1254×1254 with flood-fill transparent exterior.
-  // Interior particle zone (measured from pixel analysis):
-  //   left  ≈ 340   right ≈ 935
-  //   top   ≈ 250   bottom ≈ 940
   const BW = 1254, BH = 1254;
   const ZONE = { l: 340, r: 935, t: 260, b: 935 };
 
@@ -18,24 +13,43 @@ const Particulate = (() => {
     .then(img => { beakerImg = img; draw(); })
     .catch(err => console.error('Beaker load failed:', err));
 
-  // ── State ─────────────────────────────────────────────────────────────────
   let substances = [];
 
-  const SHAPES       = ['circle','square','triangle','diamond','pentagon'];
+  const SHAPES       = ['circle','square','triangle','diamond','pentagon','hexagon','star','cross'];
   const PALETTE      = ['#4a90e2','#e2604a','#4ae28a','#e2c24a','#c44ae2',
                         '#4ae2d8','#e24a8e','#a0e24a','#e2904a','#4a60e2'];
-  const SHAPE_LABELS = { circle:'●', square:'■', triangle:'▲', diamond:'◆', pentagon:'⬠' };
+  const SHAPE_LABELS = { circle:'●', square:'■', triangle:'▲', diamond:'◆', pentagon:'⬠',
+                         hexagon:'⬡', star:'★', cross:'✚' };
+
+  // ── Seeded RNG (Mulberry32) ────────────────────────────────────────────────
+  function makeRng(seed) {
+    let s = (seed ^ 0xDEADBEEF) | 0;
+    return function() {
+      s = s + 0x6D2B79F5 | 0;
+      let t = Math.imul(s ^ s >>> 15, 1 | s);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
 
   // ── Formula parser ────────────────────────────────────────────────────────
+  function normalizeSymbol(sym) {
+    return sym.charAt(0).toUpperCase() + sym.slice(1).toLowerCase();
+  }
+
   function parseFormula(f) {
     f = f.replace(/\(s\)|\(l\)|\(g\)|\(aq\)/gi, '').trim();
     const atoms = [];
     const re    = /([A-Z][a-z]?)(\d*)/g;
     let m;
     while ((m = re.exec(f)) !== null) {
-      if (m[1]) atoms.push({ symbol: m[1], count: parseInt(m[2] || '1', 10) });
+      if (m[1]) atoms.push({ symbol: normalizeSymbol(m[1]), count: parseInt(m[2] || '1', 10) });
     }
     return atoms;
+  }
+
+  function reconstructFormula(atoms) {
+    return atoms.map(a => a.symbol + (a.count > 1 ? a.count : '')).join('');
   }
 
   function splitSubstances(raw) {
@@ -46,7 +60,7 @@ const Particulate = (() => {
     return atoms.length > 0 && atoms.every(a => a.symbol === atoms[0].symbol);
   }
 
-  // ── UI: substance color/shape panels ─────────────────────────────────────
+  // ── UI panels ─────────────────────────────────────────────────────────────
   function buildPanels() {
     const container = document.getElementById('pd-substance-panels');
     container.innerHTML = '';
@@ -61,13 +75,23 @@ const Particulate = (() => {
       const div = document.createElement('div');
       div.className = 'substance-panel';
 
-      let rowsHTML = sub.atoms.map((atom, ai) => `
+      const rowsHTML = sub.atoms.map((atom, ai) => `
         <div class="substance-row">
           <label>${atom.symbol}</label>
-          <button class="color-swatch-btn" id="pd-sw-${i}-${ai}" style="background:${sub.colors[ai]};width:22px;height:22px;" title="Change color"></button>
+          <button class="color-swatch-btn" id="pd-sw-${i}-${ai}"
+            style="background:${sub.colors[ai]};width:22px;height:22px;"></button>
           <select id="pd-shape-${i}-${ai}">
-            ${SHAPES.map(s => `<option value="${s}"${sub.shapes[ai]===s?' selected':''}>${SHAPE_LABELS[s]} ${s}</option>`).join('')}
+            ${SHAPES.map(s =>
+              `<option value="${s}"${sub.shapes[ai]===s?' selected':''}>${SHAPE_LABELS[s]} ${s}</option>`
+            ).join('')}
           </select>
+        </div>
+        <div class="substance-size-row">
+          <span class="size-row-lbl">Size ×</span>
+          <input type="range" id="pd-smr-${i}-${ai}" min="0.4" max="3.0" step="0.1"
+            value="${sub.sizeMults[ai]}" />
+          <input type="number" id="pd-smn-${i}-${ai}" min="0.4" max="3.0" step="0.1"
+            value="${sub.sizeMults[ai]}" style="width:46px;font-size:11px;" />
         </div>
       `).join('');
 
@@ -75,42 +99,50 @@ const Particulate = (() => {
       container.appendChild(div);
 
       sub.atoms.forEach((atom, ai) => {
-        const swBtn  = document.getElementById(`pd-sw-${i}-${ai}`);
-        const shapeEl = document.getElementById(`pd-shape-${i}-${ai}`);
+        const sw    = document.getElementById(`pd-sw-${i}-${ai}`);
+        const shape = document.getElementById(`pd-shape-${i}-${ai}`);
+        const smr   = document.getElementById(`pd-smr-${i}-${ai}`);
+        const smn   = document.getElementById(`pd-smn-${i}-${ai}`);
 
-        swBtn.addEventListener('click', e => {
+        sw.addEventListener('click', e => {
           e.stopPropagation();
-          openColorPicker(swBtn, sub.colors[ai], col => {
-            sub.colors[ai] = col;
-            swBtn.style.background = col;
-            draw();
+          openColorPicker(sw, sub.colors[ai], col => {
+            sub.colors[ai] = col; sw.style.background = col; draw();
           });
         });
-        shapeEl.addEventListener('change', () => { sub.shapes[ai] = shapeEl.value; draw(); });
+        shape.addEventListener('change', () => { sub.shapes[ai] = shape.value; draw(); });
+        smr.addEventListener('input', () => {
+          smn.value = smr.value; sub.sizeMults[ai] = parseFloat(smr.value); draw();
+        });
+        smn.addEventListener('input', () => {
+          const v = Math.max(0.4, Math.min(3.0, parseFloat(smn.value) || 1));
+          smr.value = v; sub.sizeMults[ai] = v; draw();
+        });
       });
     });
   }
 
-  // ── Parse input ───────────────────────────────────────────────────────────
+  // ── Parse ─────────────────────────────────────────────────────────────────
   function parse() {
     const raw = strVal('pd-formula', '');
     if (!raw) { showToast('Enter a formula or mixture.', true); return; }
-
     const parts = splitSubstances(raw);
     if (!parts.length) { showToast('Could not parse input.', true); return; }
 
     const prevMap = {};
-    substances.forEach(s => { prevMap[s.formula] = { colors: s.colors, shapes: s.shapes }; });
+    substances.forEach(s => { prevMap[s.formula] = s; });
 
     let colorIdx = 0;
     substances = parts.map(formula => {
-      const atoms = parseFormula(formula);
+      const atoms     = parseFormula(formula);
       if (!atoms.length) return null;
-      const prev   = prevMap[formula];
-      const colors = atoms.map((a, i) => prev?.colors[i] || PALETTE[(colorIdx + i) % PALETTE.length]);
-      const shapes = atoms.map((a, i) => prev?.shapes[i] || SHAPES[i % SHAPES.length]);
+      const canonical = reconstructFormula(atoms);
+      const prev      = prevMap[canonical];
+      const colors    = atoms.map((a, i) => prev?.colors[i]      || PALETTE[(colorIdx + i) % PALETTE.length]);
+      const shapes    = atoms.map((a, i) => prev?.shapes[i]      || SHAPES[i % SHAPES.length]);
+      const sizeMults = atoms.map((a, i) => prev?.sizeMults?.[i] ?? 1.0);
       colorIdx += atoms.length;
-      return { formula, atoms, colors, shapes };
+      return { formula: canonical, atoms, colors, shapes, sizeMults };
     }).filter(Boolean);
 
     if (!substances.length) { showToast('No valid formulas found.', true); return; }
@@ -119,158 +151,214 @@ const Particulate = (() => {
   }
 
   // ── Shape drawing ─────────────────────────────────────────────────────────
-  function drawShape(x, y, r, shape, color) {
+  function drawShape(x, y, r, shape, color, rotation) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rotation || 0);
     ctx.fillStyle   = color;
     ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-    ctx.lineWidth   = Math.max(1, r * 0.12);
+    ctx.lineWidth   = Math.max(0.8, r * 0.12);
     ctx.beginPath();
     switch (shape) {
       case 'circle':
-        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
         break;
       case 'square': {
         const s = r * 1.7;
-        ctx.rect(x - s/2, y - s/2, s, s);
+        ctx.rect(-s/2, -s/2, s, s);
         break;
       }
       case 'triangle': {
         const h = r * 1.9;
-        ctx.moveTo(x,          y - h * 0.65);
-        ctx.lineTo(x + h * 0.58, y + h * 0.38);
-        ctx.lineTo(x - h * 0.58, y + h * 0.38);
+        ctx.moveTo(0, -h * 0.65);
+        ctx.lineTo( h * 0.58,  h * 0.38);
+        ctx.lineTo(-h * 0.58,  h * 0.38);
         ctx.closePath();
         break;
       }
       case 'diamond': {
         const d = r * 1.8;
-        ctx.moveTo(x,           y - d * 0.62);
-        ctx.lineTo(x + d * 0.45, y);
-        ctx.lineTo(x,           y + d * 0.62);
-        ctx.lineTo(x - d * 0.45, y);
+        ctx.moveTo(0, -d * 0.62);
+        ctx.lineTo( d * 0.45, 0);
+        ctx.lineTo(0,  d * 0.62);
+        ctx.lineTo(-d * 0.45, 0);
         ctx.closePath();
         break;
       }
       case 'pentagon': {
         for (let k = 0; k < 5; k++) {
-          const angle = (k * 2 * Math.PI / 5) - Math.PI / 2;
-          const px = x + r * 1.3 * Math.cos(angle);
-          const py = y + r * 1.3 * Math.sin(angle);
-          k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+          const a = (k * 2 * Math.PI / 5) - Math.PI / 2;
+          k === 0 ? ctx.moveTo(r*1.3*Math.cos(a), r*1.3*Math.sin(a))
+                  : ctx.lineTo(r*1.3*Math.cos(a), r*1.3*Math.sin(a));
         }
+        ctx.closePath();
+        break;
+      }
+      case 'hexagon': {
+        for (let k = 0; k < 6; k++) {
+          const a = (k * Math.PI / 3) - Math.PI / 6;
+          k === 0 ? ctx.moveTo(r*1.25*Math.cos(a), r*1.25*Math.sin(a))
+                  : ctx.lineTo(r*1.25*Math.cos(a), r*1.25*Math.sin(a));
+        }
+        ctx.closePath();
+        break;
+      }
+      case 'star': {
+        const outer = r * 1.4, inner = r * 0.6;
+        for (let k = 0; k < 12; k++) {
+          const a  = (k * Math.PI / 6) - Math.PI / 2;
+          const rk = k % 2 === 0 ? outer : inner;
+          k === 0 ? ctx.moveTo(rk*Math.cos(a), rk*Math.sin(a))
+                  : ctx.lineTo(rk*Math.cos(a), rk*Math.sin(a));
+        }
+        ctx.closePath();
+        break;
+      }
+      case 'cross': {
+        const arm = r * 1.35, thick = r * 0.52;
+        ctx.moveTo(-thick, -arm); ctx.lineTo( thick, -arm);
+        ctx.lineTo( thick, -thick); ctx.lineTo( arm, -thick);
+        ctx.lineTo( arm,  thick); ctx.lineTo( thick,  thick);
+        ctx.lineTo( thick,  arm); ctx.lineTo(-thick,  arm);
+        ctx.lineTo(-thick,  thick); ctx.lineTo(-arm,  thick);
+        ctx.lineTo(-arm, -thick); ctx.lineTo(-thick, -thick);
         ctx.closePath();
         break;
       }
     }
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
   }
 
-  function drawBond(x1, y1, x2, y2) {
+  // ── Bond drawing — solid line ─────────────────────────────────────────────
+  function drawBond(x1, y1, x2, y2, thickness, lengthFrac) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const trim = (1 - Math.min(1, Math.max(0, lengthFrac))) / 2;
     ctx.save();
-    ctx.strokeStyle = 'rgba(140,140,140,0.6)';
-    ctx.lineWidth   = 1.5;
+    ctx.strokeStyle = 'rgba(140,140,140,0.65)';
+    ctx.lineWidth   = Math.max(0.5, thickness);
     ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+    ctx.moveTo(x1 + dx * trim, y1 + dy * trim);
+    ctx.lineTo(x2 - dx * trim, y2 - dy * trim);
     ctx.stroke();
     ctx.restore();
   }
 
   // ── Main draw ─────────────────────────────────────────────────────────────
-  // Draw order:
-  //   1. White (or transparent) canvas background
-  //   2. Beaker image FIRST (as the base layer)
-  //   3. Particles drawn ON TOP of the beaker, constrained to the interior zone
   function draw() {
-    const zoom        = numVal('pd-zoom-range', 45) / 100;
+    const zoom        = numVal('pd-zoom-range',       45) / 100;
     const countPerSub = Math.round(numVal('pd-count-range', 10));
-    const atomR       = numVal('pd-size-range', 14);
+    const atomR       = numVal('pd-size-range',       14);
     const transparent = isChecked('pd-transparent');
+    const randomness  = numVal('pd-random-range',     50) / 100;
+    const bondThick   = numVal('pd-bond-thick-range', 15) / 10;
+    const bondLen     = numVal('pd-bond-len-range',   90) / 100;
 
     canvas.width  = Math.round(BW * zoom);
     canvas.height = Math.round(BH * zoom);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Step 1: background
-    if (!transparent) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
+    if (!transparent) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    if (beakerImg) ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
 
-    // Step 2: beaker image FIRST — drawn as the base layer
-    if (beakerImg) {
-      ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
-    }
+    if (!substances.length) { buildLegend(); return; }
 
-    // Scaled interior zone
     const zl = ZONE.l * zoom, zr = ZONE.r * zoom;
     const zt = ZONE.t * zoom, zb = ZONE.b * zoom;
     const zw = zr - zl, zh = zb - zt;
+    const N  = substances.length;
 
-    // Step 3: generate + draw particles ON TOP of the beaker
-    if (substances.length) {
-      const rng    = seededRng(42);
-      const placed = [];
-      const margin = atomR * zoom * 2.8;
-      const positions = [];
+    // ── Round-robin guaranteed placement ─────────────────────────────────
+    // Each substance gets its own RNG stream so they don't compete for positions
+    const rngs     = substances.map((_, si) => makeRng(si * 9999 + countPerSub * 7 + Math.round(atomR)));
+    const cols     = Math.max(2, Math.ceil(Math.sqrt(countPerSub * 1.5)));
+    const rows     = Math.max(2, Math.ceil(countPerSub / cols) + 1);
+    const cellW    = zw / cols;
+    const cellH    = zh / rows;
+    const placed   = [];
+    const allPos   = [];
+    const counts   = new Array(N).fill(0);
+    const attempts = new Array(N).fill(0);
+    const MAX_ATT  = 8000;
 
-      substances.forEach((sub, si) => {
-        let attempts = 0, placed_count = 0;
-        while (placed_count < countPerSub && attempts < 10000) {
-          attempts++;
-          const cx = zl + margin + rng() * (zw - margin * 2);
-          const cy = zt + margin + rng() * (zh - margin * 2);
-          const nAtoms = sub.atoms.length;
-          const mAtoms = [];
+    let anyActive = true;
+    while (anyActive) {
+      anyActive = false;
+      for (let si = 0; si < N; si++) {
+        if (counts[si] >= countPerSub) continue;
+        if (attempts[si] >= MAX_ATT) continue;
+        anyActive = true;
 
-          if (nAtoms === 1) {
-            mAtoms.push({ x: cx, y: cy });
-          } else {
-            for (let ai = 0; ai < nAtoms; ai++) {
-              const angle = (ai / nAtoms) * Math.PI * 2;
-              const dist  = atomR * zoom * 1.8;
-              mAtoms.push({ x: cx + dist * Math.cos(angle), y: cy + dist * Math.sin(angle) });
-            }
+        const sub    = substances[si];
+        const rng    = rngs[si];
+        attempts[si]++;
+
+        const molIdx = counts[si];
+        const col    = molIdx % cols;
+        const row    = Math.floor(molIdx / cols) % rows;
+        const baseX  = zl + (col + 0.5) * cellW;
+        const baseY  = zt + (row + 0.5) * cellH;
+        const jx     = (rng() - 0.5) * 2 * randomness * cellW * 2.5;
+        const jy     = (rng() - 0.5) * 2 * randomness * cellH * 2.5;
+        const cx     = Math.max(zl + 10, Math.min(zr - 10, baseX + jx));
+        const cy     = Math.max(zt + 10, Math.min(zb - 10, baseY + jy));
+        const molRot = randomness * (rng() * 2 - 1) * Math.PI;
+
+        const nAtoms   = sub.atoms.length;
+        const maxMult  = Math.max(...sub.sizeMults);
+        const bondDist = atomR * zoom * maxMult * 1.9;
+        const mAtoms   = [];
+
+        if (nAtoms === 1) {
+          mAtoms.push({ x: cx, y: cy });
+        } else {
+          for (let ai = 0; ai < nAtoms; ai++) {
+            const angle = molRot + (ai / nAtoms) * Math.PI * 2;
+            mAtoms.push({ x: cx + bondDist * Math.cos(angle), y: cy + bondDist * Math.sin(angle) });
           }
-
-          const r2 = atomR * zoom * 1.9;
-          const inBounds = mAtoms.every(a =>
-            a.x - r2 > zl && a.x + r2 < zr &&
-            a.y - r2 > zt && a.y + r2 < zb
-          );
-          if (!inBounds) continue;
-
-          const overlaps = mAtoms.some(a =>
-            placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 * 1.25)
-          );
-          if (overlaps) continue;
-
-          mAtoms.forEach((a, ai) => {
-            placed.push(a);
-            positions.push({ ...a, subIdx: si, atomIdx: ai, molId: placed_count, cx, cy });
-          });
-          placed_count++;
         }
-      });
 
-      // Draw bonds
-      const byMol = {};
-      positions.forEach(p => {
-        const key = `${p.subIdx}-${p.molId}`;
-        (byMol[key] = byMol[key] || []).push(p);
-      });
-      Object.values(byMol).forEach(atoms => {
-        if (atoms.length < 2) return;
-        const { cx, cy } = atoms[0];
-        atoms.forEach(a => drawBond(a.x, a.y, cx, cy));
-      });
+        const inBounds = mAtoms.every((a, ai) => {
+          const r2 = atomR * zoom * sub.sizeMults[ai] * 1.3;
+          return a.x - r2 > zl && a.x + r2 < zr && a.y - r2 > zt && a.y + r2 < zb;
+        });
+        if (!inBounds) continue;
 
-      // Draw atoms on top of the beaker
-      positions.forEach(p => {
-        const sub = substances[p.subIdx];
-        drawShape(p.x, p.y, atomR * zoom, sub.shapes[p.atomIdx], sub.colors[p.atomIdx]);
-      });
+        const overlaps = mAtoms.some(a => {
+          const r2 = atomR * zoom * maxMult * 1.05;
+          return placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 + p.r);
+        });
+        if (overlaps) continue;
+
+        mAtoms.forEach((a, ai) => {
+          const r2 = atomR * zoom * sub.sizeMults[ai];
+          placed.push({ x: a.x, y: a.y, r: r2 });
+          allPos.push({ x: a.x, y: a.y, subIdx: si, atomIdx: ai,
+                        molId: molIdx, cx, cy, rotation: molRot });
+        });
+        counts[si]++;
+      }
     }
+
+    // Draw bonds (solid)
+    const byMol = {};
+    allPos.forEach(p => {
+      const key = `${p.subIdx}-${p.molId}`;
+      (byMol[key] = byMol[key] || []).push(p);
+    });
+    Object.values(byMol).forEach(atoms => {
+      if (atoms.length < 2) return;
+      const { cx, cy } = atoms[0];
+      atoms.forEach(a => drawBond(a.x, a.y, cx, cy, bondThick, bondLen));
+    });
+
+    // Draw atoms
+    allPos.forEach(p => {
+      const sub = substances[p.subIdx];
+      const r   = atomR * zoom * sub.sizeMults[p.atomIdx];
+      drawShape(p.x, p.y, r, sub.shapes[p.atomIdx], sub.colors[p.atomIdx], p.rotation);
+    });
 
     buildLegend();
   }
@@ -280,20 +368,15 @@ const Particulate = (() => {
     const el = document.getElementById('pd-legend');
     el.innerHTML = '';
     if (!substances.length) return;
-
     const allElements  = substances.every(s => isElement(s.atoms));
     const allCompounds = substances.every(s => !isElement(s.atoms));
     const cat = substances.length === 1 ? '' :
-                allElements  ? 'ME' :
-                allCompounds ? 'MC' : 'MEC';
-
+                allElements ? 'ME' : allCompounds ? 'MC' : 'MEC';
     substances.forEach(sub => {
       const typeLabel = isElement(sub.atoms)
-        ? (sub.atoms.length > 1 ? 'Diatomic Element' : 'Element')
-        : 'Compound';
-
+        ? (sub.atoms.length > 1 ? 'Diatomic Element' : 'Element') : 'Compound';
       sub.atoms.forEach((atom, ai) => {
-        const item   = document.createElement('div');
+        const item = document.createElement('div');
         item.className = 'legend-item';
         const swatch = document.createElement('div');
         swatch.className = 'legend-swatch';
@@ -309,53 +392,33 @@ const Particulate = (() => {
     });
   }
 
-  // ── Seeded RNG (Mulberry32) ───────────────────────────────────────────────
-  function seededRng(seed) {
-    return function() {
-      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-      let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
-
   // ── Event bindings ────────────────────────────────────────────────────────
   document.getElementById('pd-formula').addEventListener('keydown', e => {
     if (e.key === 'Enter') parse();
   });
-
-  bindSliderWithInput('pd-count-range', 'pd-count-num', draw);
-  bindSliderWithInput('pd-size-range',  'pd-size-num',  draw);
-  bindSliderWithInput('pd-zoom-range',  'pd-zoom-num',  draw);
-
+  bindSliderWithInput('pd-count-range',      'pd-count-num',      draw);
+  bindSliderWithInput('pd-size-range',       'pd-size-num',       draw);
+  bindSliderWithInput('pd-zoom-range',       'pd-zoom-num',       draw);
+  bindSliderWithInput('pd-random-range',     'pd-random-num',     draw);
+  bindSliderWithInput('pd-bond-thick-range', 'pd-bond-thick-num', draw);
+  bindSliderWithInput('pd-bond-len-range',   'pd-bond-len-num',   draw);
   document.getElementById('pd-transparent').addEventListener('change', () => {
-    updateBgClass('pd-checker', isChecked('pd-transparent'));
-    draw();
+    updateBgClass('pd-checker', isChecked('pd-transparent')); draw();
   });
 
   const EXAMPLES = {
-    element:  'Na',
-    diatomic: 'O2',
-    compound: 'H2O',
-    me:       'Na + Ca',
-    mc:       'NaCl + CaCl2',
-    mec:      'Na + NaCl',
-    three:    'H2O + NaCl + CO2',
+    element: 'Na', diatomic: 'O2', compound: 'H2O',
+    me: 'Na + Ca', mc: 'NaCl + CaCl2', mec: 'Na + NaCl', three: 'H2O + NaCl + CO2',
   };
-
-  function loadExample(key) {
-    document.getElementById('pd-formula').value = EXAMPLES[key] || '';
-    parse();
-  }
+  function loadExample(k) { document.getElementById('pd-formula').value = EXAMPLES[k] || ''; parse(); }
 
   function exportPNG() {
     draw();
-    const link = document.createElement('a');
-    link.download = 'particulate_diagram.png';
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    const a = document.createElement('a');
+    a.download = 'particulate_diagram.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
   }
-
   function clear() {
     document.getElementById('pd-formula').value = '';
     substances = [];
