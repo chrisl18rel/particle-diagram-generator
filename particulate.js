@@ -181,11 +181,10 @@ const Particulate = (() => {
   // ── Main draw ─────────────────────────────────────────────────────────────
   // Draw order:
   //   1. White (or transparent) canvas background
-  //   2. Particles (drawn directly onto canvas, no clipping needed)
-  //   3. Beaker image ON TOP  ← beaker has transparent exterior so particles
-  //      show through the glass; the glass walls paint over any stray particles
+  //   2. Beaker image FIRST (as the base layer)
+  //   3. Particles drawn ON TOP of the beaker, constrained to the interior zone
   function draw() {
-    const zoom        = numVal('pd-zoom-range', 75) / 100;
+    const zoom        = numVal('pd-zoom-range', 45) / 100;
     const countPerSub = Math.round(numVal('pd-count-range', 10));
     const atomR       = numVal('pd-size-range', 14);
     const transparent = isChecked('pd-transparent');
@@ -200,12 +199,17 @@ const Particulate = (() => {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    // Step 2: beaker image FIRST — drawn as the base layer
+    if (beakerImg) {
+      ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
+    }
+
     // Scaled interior zone
     const zl = ZONE.l * zoom, zr = ZONE.r * zoom;
     const zt = ZONE.t * zoom, zb = ZONE.b * zoom;
     const zw = zr - zl, zh = zb - zt;
 
-    // Step 2: generate + draw particles
+    // Step 3: generate + draw particles ON TOP of the beaker
     if (substances.length) {
       const rng    = seededRng(42);
       const placed = [];
@@ -263,17 +267,11 @@ const Particulate = (() => {
         atoms.forEach(a => drawBond(a.x, a.y, cx, cy));
       });
 
-      // Draw atoms
+      // Draw atoms on top of the beaker
       positions.forEach(p => {
         const sub = substances[p.subIdx];
         drawShape(p.x, p.y, atomR * zoom, sub.shapes[p.atomIdx], sub.colors[p.atomIdx]);
       });
-    }
-
-    // Step 3: beaker overlay — draws on top of particles
-    // The PNG has transparent exterior so only glass walls + base paint over particles
-    if (beakerImg) {
-      ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
     }
 
     buildLegend();
