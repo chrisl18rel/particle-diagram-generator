@@ -15,10 +15,11 @@ const Particulate = (() => {
 
   let substances = [];
 
-  const SHAPES       = ['circle','square','triangle','diamond','pentagon'];
+  const SHAPES       = ['circle','square','triangle','diamond','pentagon','hexagon','star','cross'];
   const PALETTE      = ['#4a90e2','#e2604a','#4ae28a','#e2c24a','#c44ae2',
                         '#4ae2d8','#e24a8e','#a0e24a','#e2904a','#4a60e2'];
-  const SHAPE_LABELS = { circle:'●', square:'■', triangle:'▲', diamond:'◆', pentagon:'⬠' };
+  const SHAPE_LABELS = { circle:'●', square:'■', triangle:'▲', diamond:'◆', pentagon:'⬠',
+                         hexagon:'⬡', star:'★', cross:'✚' };
 
   // ── Seeded RNG (Mulberry32) ────────────────────────────────────────────────
   function makeRng(seed) {
@@ -190,6 +191,38 @@ const Particulate = (() => {
           k === 0 ? ctx.moveTo(r*1.3*Math.cos(a), r*1.3*Math.sin(a))
                   : ctx.lineTo(r*1.3*Math.cos(a), r*1.3*Math.sin(a));
         }
+        ctx.closePath();
+        break;
+      }
+      case 'hexagon': {
+        for (let k = 0; k < 6; k++) {
+          const a = (k * Math.PI / 3) - Math.PI / 6;
+          k === 0 ? ctx.moveTo(r*1.25*Math.cos(a), r*1.25*Math.sin(a))
+                  : ctx.lineTo(r*1.25*Math.cos(a), r*1.25*Math.sin(a));
+        }
+        ctx.closePath();
+        break;
+      }
+      case 'star': {
+        // 6-pointed star (two overlapping triangles feel)
+        const outer = r * 1.4, inner = r * 0.6;
+        for (let k = 0; k < 12; k++) {
+          const a  = (k * Math.PI / 6) - Math.PI / 2;
+          const rk = k % 2 === 0 ? outer : inner;
+          k === 0 ? ctx.moveTo(rk*Math.cos(a), rk*Math.sin(a))
+                  : ctx.lineTo(rk*Math.cos(a), rk*Math.sin(a));
+        }
+        ctx.closePath();
+        break;
+      }
+      case 'cross': {
+        const arm = r * 1.35, thick = r * 0.52;
+        ctx.moveTo(-thick, -arm); ctx.lineTo( thick, -arm);
+        ctx.lineTo( thick, -thick); ctx.lineTo( arm, -thick);
+        ctx.lineTo( arm,  thick); ctx.lineTo( thick,  thick);
+        ctx.lineTo( thick,  arm); ctx.lineTo(-thick,  arm);
+        ctx.lineTo(-thick,  thick); ctx.lineTo(-arm,  thick);
+        ctx.lineTo(-arm, -thick); ctx.lineTo(-thick, -thick);
         ctx.closePath();
         break;
       }
