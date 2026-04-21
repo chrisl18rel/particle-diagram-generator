@@ -238,12 +238,10 @@ const Particulate = (() => {
     ctx.save();
     ctx.strokeStyle = 'rgba(140,140,140,0.65)';
     ctx.lineWidth   = Math.max(0.5, thickness);
-    ctx.setLineDash([4, 3]);
     ctx.beginPath();
     ctx.moveTo(x1 + dx * trim, y1 + dy * trim);
     ctx.lineTo(x2 - dx * trim, y2 - dy * trim);
     ctx.stroke();
-    ctx.setLineDash([]);
     ctx.restore();
   }
 
