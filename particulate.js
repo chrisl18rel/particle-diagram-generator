@@ -7,27 +7,29 @@ const Particulate = (() => {
   const ctx    = canvas.getContext('2d');
   let beakerImg = null;
 
-  // Beaker interior bounds (relative to 1092×1092 source image)
-  // These define where particles can be placed inside the beaker
-  const BW = 1092, BH = 1092;
-  const BEAKER = { l: 210, r: 882, t: 130, b: 940 };
+  // Actual image size: 1254 × 1254
+  // Interior bounds measured from pixel analysis:
+  //   left wall inner edge  ≈ 365
+  //   right wall inner edge ≈ 912
+  //   top of open interior  ≈ 205
+  //   bottom of interior    ≈ 935
+  const BW = 1254, BH = 1254;
+  const BEAKER = { l: 365, r: 912, t: 205, b: 935 };
 
   loadImageFromDataURI(BEAKER_IMG)
     .then(img => { beakerImg = img; draw(); })
     .catch(err => console.error('Beaker load failed:', err));
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let substances = [];   // [{ formula, atoms, color, shape, count }]
+  let substances = [];
 
-  const SHAPES   = ['circle','square','triangle','diamond','pentagon'];
-  const PALETTE  = ['#4a90e2','#e2604a','#4ae28a','#e2c24a','#c44ae2',
-                     '#4ae2d8','#e24a8e','#a0e24a','#e2904a','#4a60e2'];
+  const SHAPES       = ['circle','square','triangle','diamond','pentagon'];
+  const PALETTE      = ['#4a90e2','#e2604a','#4ae28a','#e2c24a','#c44ae2',
+                        '#4ae2d8','#e24a8e','#a0e24a','#e2904a','#4a60e2'];
   const SHAPE_LABELS = { circle:'●', square:'■', triangle:'▲', diamond:'◆', pentagon:'⬠' };
 
   // ── Formula parser ────────────────────────────────────────────────────────
-  // Returns array of { symbol, count } atoms from a single formula string
   function parseFormula(f) {
-    // Strip state symbols, charges, extras
     f = f.replace(/\(s\)|\(l\)|\(g\)|\(aq\)/gi, '').trim();
     const atoms = [];
     const re = /([A-Z][a-z]?)(\d*)/g;
@@ -38,15 +40,12 @@ const Particulate = (() => {
     return atoms;
   }
 
-  // Split input on '+' respecting that formulas don't use +
   function splitSubstances(raw) {
     return raw.split('+').map(s => s.trim()).filter(Boolean);
   }
 
-  // Determine if a formula is an element (all atoms same symbol) or compound
   function isElement(atoms) {
-    if (!atoms.length) return false;
-    return atoms.every(a => a.symbol === atoms[0].symbol);
+    return atoms.length > 0 && atoms.every(a => a.symbol === atoms[0].symbol);
   }
 
   // ── UI: rebuild substance color/shape panels ──────────────────────────────
@@ -77,7 +76,6 @@ const Particulate = (() => {
       `;
       container.appendChild(div);
 
-      // Bind events
       sub.atoms.forEach((atom, ai) => {
         const colorEl = document.getElementById(`pd-color-${i}-${ai}`);
         const shapeEl = document.getElementById(`pd-shape-${i}-${ai}`);
@@ -87,7 +85,7 @@ const Particulate = (() => {
     });
   }
 
-  // ── Parse input and rebuild substance list ────────────────────────────────
+  // ── Parse input ───────────────────────────────────────────────────────────
   function parse() {
     const raw = strVal('pd-formula', '');
     if (!raw) { showToast('Enter a formula or mixture.', true); return; }
@@ -95,7 +93,6 @@ const Particulate = (() => {
     const parts = splitSubstances(raw);
     if (!parts.length) { showToast('Could not parse input.', true); return; }
 
-    // Preserve color/shape settings for already-known formulas
     const prevMap = {};
     substances.forEach(s => { prevMap[s.formula] = { colors: s.colors, shapes: s.shapes }; });
 
@@ -103,9 +100,9 @@ const Particulate = (() => {
     substances = parts.map(formula => {
       const atoms = parseFormula(formula);
       if (!atoms.length) return null;
-      const prev = prevMap[formula];
-      const colors = atoms.map((a, i) => prev ? prev.colors[i] || PALETTE[(colorIdx + i) % PALETTE.length] : PALETTE[(colorIdx + i) % PALETTE.length]);
-      const shapes = atoms.map((a, i) => prev ? prev.shapes[i] || SHAPES[i % SHAPES.length] : SHAPES[i % SHAPES.length]);
+      const prev   = prevMap[formula];
+      const colors = atoms.map((a, i) => prev?.colors[i] || PALETTE[(colorIdx + i) % PALETTE.length]);
+      const shapes = atoms.map((a, i) => prev?.shapes[i] || SHAPES[i % SHAPES.length]);
       colorIdx += atoms.length;
       return { formula, atoms, colors, shapes };
     }).filter(Boolean);
@@ -115,11 +112,11 @@ const Particulate = (() => {
     draw();
   }
 
-  // ── Drawing ───────────────────────────────────────────────────────────────
-  function drawShape(x, y, r, shape, color, strokeColor) {
+  // ── Shape drawing ─────────────────────────────────────────────────────────
+  function drawShape(x, y, r, shape, color) {
     ctx.fillStyle   = color;
-    ctx.strokeStyle = strokeColor || 'rgba(0,0,0,0.35)';
-    ctx.lineWidth   = 1.2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth   = Math.max(0.8, r * 0.1);
     ctx.beginPath();
     switch (shape) {
       case 'circle':
@@ -150,6 +147,8 @@ const Particulate = (() => {
       case 'pentagon': {
         for (let k = 0; k < 5; k++) {
           const angle = (k * 2 * Math.PI / 5) - Math.PI / 2;
+          ctx.lineTo
+            ? null : void 0;
           const px = x + r * 1.3 * Math.cos(angle);
           const py = y + r * 1.3 * Math.sin(angle);
           k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
@@ -162,11 +161,10 @@ const Particulate = (() => {
     ctx.stroke();
   }
 
-  // Draw a bond line between two atom centers
   function drawBond(x1, y1, x2, y2) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(180,180,180,0.6)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(160,160,160,0.55)';
+    ctx.lineWidth   = 1.5;
     ctx.setLineDash([3, 2]);
     ctx.beginPath();
     ctx.moveTo(x1, y1);
@@ -176,61 +174,64 @@ const Particulate = (() => {
     ctx.restore();
   }
 
+  // ── Main draw ─────────────────────────────────────────────────────────────
   function draw() {
     const zoom        = numVal('pd-zoom-range', 75) / 100;
     const countPerSub = Math.round(numVal('pd-count-range', 10));
     const atomR       = numVal('pd-size-range', 14);
     const transparent = isChecked('pd-transparent');
 
-    // Canvas dimensions = beaker image scaled
     canvas.width  = Math.round(BW * zoom);
     canvas.height = Math.round(BH * zoom);
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const il = BEAKER.l * zoom, ir = BEAKER.r * zoom;
+    const it = BEAKER.t * zoom, ib = BEAKER.b * zoom;
+    const iw = ir - il, ih = ib - it;
+
+    // ── Step 1: White background outside beaker (non-transparent mode) ────
     if (!transparent) {
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ── Generate particle positions ──────────────────────────────────────
-    // Interior bounds scaled
-    const il = BEAKER.l * zoom, ir = BEAKER.r * zoom;
-    const it = BEAKER.t * zoom, ib = BEAKER.b * zoom;
-    const iw = ir - il, ih = ib - it;
+    // ── Step 2: Fill beaker interior white, then draw particles inside ────
+    ctx.save();
+    // Clip to beaker interior
+    ctx.beginPath();
+    ctx.rect(il, it, iw, ih);
+    ctx.clip();
 
-    const positions = [];  // { x, y, subIdx, atomIdx, atomsInMolecule }
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(il, it, iw, ih);
 
+    // Generate particle positions
+    const positions = [];
     if (substances.length) {
-      // Attempt placement with simple random + rejection sampling
-      const rng = seededRng(42);
+      const rng    = seededRng(42);
       const placed = [];
-      const margin = atomR * zoom * 2.2;
+      const margin = atomR * zoom * 2.5;
 
       substances.forEach((sub, si) => {
-        let attempts = 0;
-        let placed_count = 0;
-        while (placed_count < countPerSub && attempts < 5000) {
+        let attempts = 0, placed_count = 0;
+        while (placed_count < countPerSub && attempts < 8000) {
           attempts++;
-          // Molecule center
           const cx = il + margin + rng() * (iw - margin * 2);
           const cy = it + margin + rng() * (ih - margin * 2);
           const nAtoms = sub.atoms.length;
-
-          // Build atom positions for this molecule
           const mAtoms = [];
+
           if (nAtoms === 1) {
             mAtoms.push({ x: cx, y: cy });
           } else {
-            // arrange atoms in a small cluster around center
             for (let ai = 0; ai < nAtoms; ai++) {
               const angle = (ai / nAtoms) * Math.PI * 2;
-              const dist  = atomR * zoom * 1.6;
+              const dist  = atomR * zoom * 1.7;
               mAtoms.push({ x: cx + dist * Math.cos(angle), y: cy + dist * Math.sin(angle) });
             }
           }
 
-          // Check all atoms in bounds + no overlap with existing
-          const r2 = atomR * zoom * 1.6;
+          const r2 = atomR * zoom * 1.8;
           const inBounds = mAtoms.every(a =>
             a.x - r2 > il && a.x + r2 < ir &&
             a.y - r2 > it && a.y + r2 < ib
@@ -238,21 +239,20 @@ const Particulate = (() => {
           if (!inBounds) continue;
 
           const overlaps = mAtoms.some(a =>
-            placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 * 1.4)
+            placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 * 1.3)
           );
           if (overlaps) continue;
 
           mAtoms.forEach((a, ai) => {
             placed.push(a);
-            positions.push({ ...a, subIdx: si, atomIdx: ai, totalAtoms: nAtoms, molId: placed_count, cx, cy });
+            positions.push({ ...a, subIdx: si, atomIdx: ai, molId: placed_count, cx, cy });
           });
           placed_count++;
         }
       });
     }
 
-    // ── Draw bonds first (below atoms) ──────────────────────────────────
-    // Group by (subIdx, molId)
+    // Draw bonds
     const byMol = {};
     positions.forEach(p => {
       const key = `${p.subIdx}-${p.molId}`;
@@ -260,24 +260,64 @@ const Particulate = (() => {
     });
     Object.values(byMol).forEach(atoms => {
       if (atoms.length < 2) return;
-      // Draw bond from each atom to the center
-      const cx = atoms[0].cx, cy = atoms[0].cy;
+      const { cx, cy } = atoms[0];
       atoms.forEach(a => drawBond(a.x, a.y, cx, cy));
     });
 
-    // ── Draw atoms ───────────────────────────────────────────────────────
     positions.forEach(p => {
       const sub = substances[p.subIdx];
       drawShape(p.x, p.y, atomR * zoom, sub.shapes[p.atomIdx], sub.colors[p.atomIdx]);
     });
 
-    // ── Draw beaker image on top ─────────────────────────────────────────
+    ctx.restore(); // remove interior clip
+
+    // ── Step 3: Draw beaker glass on top of particles ─────────────────────
     if (beakerImg) {
       ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
     }
 
-    // ── Legend ───────────────────────────────────────────────────────────
+    // ── Step 4: If transparent, erase exterior white ──────────────────────
+    if (transparent && beakerImg) {
+      eraseExterior(zoom);
+    }
+
     buildLegend();
+  }
+
+  // Erase pixels outside the beaker outline using destination-in with a mask
+  function eraseExterior(zoom) {
+    // Build mask on offscreen canvas: white = keep, transparent = erase
+    const tmp = document.createElement('canvas');
+    tmp.width  = canvas.width;
+    tmp.height = canvas.height;
+    const tc = tmp.getContext('2d');
+
+    // Outer beaker silhouette (from pixel analysis: outer walls ≈ 254–976, rows 138–1098)
+    const ol = 248 * zoom, or_ = 982 * zoom;
+    const ot = 134 * zoom, ob  = 1104 * zoom;
+    const cw = canvas.width, ch = canvas.height;
+
+    tc.fillStyle = '#fff';
+    tc.beginPath();
+    // Spout notch at top-left (the pour spout)
+    const spoutL = ol, spoutT = ot;
+    const spoutW = (or_ - ol) * 0.22;
+    const rimT   = ot + 60 * zoom;
+    // Outer shape: start at top-left of rim
+    tc.moveTo(ol + spoutW, spoutT);                          // spout left
+    tc.quadraticCurveTo(ol + spoutW * 0.4, spoutT, ol, rimT); // spout curve
+    tc.lineTo(ol - 5 * zoom, ob - 90 * zoom);               // left side
+    tc.quadraticCurveTo(ol, ob + 5 * zoom, (ol + or_) / 2, ob + 5 * zoom); // bottom arc
+    tc.quadraticCurveTo(or_, ob + 5 * zoom, or_ + 5 * zoom, ob - 90 * zoom); // right bottom
+    tc.lineTo(or_ + 5 * zoom, rimT);                         // right side
+    tc.quadraticCurveTo(or_, spoutT, ol + spoutW, spoutT);  // right rim
+    tc.closePath();
+    tc.fill();
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(tmp, 0, 0);
+    ctx.restore();
   }
 
   // ── Legend ────────────────────────────────────────────────────────────────
@@ -286,35 +326,27 @@ const Particulate = (() => {
     el.innerHTML = '';
     if (!substances.length) return;
 
-    substances.forEach(sub => {
-      const isElem = isElement(sub.atoms);
-      const typeLabel = isElem
-        ? (sub.atoms.length > 1 ? 'Diatomic Element' : 'Element')
-        : (substances.length > 1 ? 'Compound' : 'Compound');
+    const allElements  = substances.every(s => isElement(s.atoms));
+    const allCompounds = substances.every(s => !isElement(s.atoms));
+    const cat = substances.length === 1 ? '' :
+                allElements  ? 'ME' :
+                allCompounds ? 'MC' : 'MEC';
 
-      // For mixtures show category
-      let cat = '';
-      if (substances.length > 1) {
-        const allElements  = substances.every(s => isElement(s.atoms));
-        const allCompounds = substances.every(s => !isElement(s.atoms));
-        if (allElements)       cat = 'ME';
-        else if (allCompounds) cat = 'MC';
-        else                   cat = 'MEC';
-      }
+    substances.forEach(sub => {
+      const typeLabel = isElement(sub.atoms)
+        ? (sub.atoms.length > 1 ? 'Diatomic Element' : 'Element')
+        : 'Compound';
 
       sub.atoms.forEach((atom, ai) => {
-        const item = document.createElement('div');
+        const item   = document.createElement('div');
         item.className = 'legend-item';
         const swatch = document.createElement('div');
         swatch.className = 'legend-swatch';
-        swatch.style.background    = sub.colors[ai];
-        swatch.style.borderRadius  = sub.shapes[ai] === 'circle' ? '50%' : '3px';
-        if (sub.shapes[ai] === 'triangle' || sub.shapes[ai] === 'diamond') {
-          swatch.style.borderRadius = '2px';
-          swatch.style.transform = 'rotate(45deg)';
-        }
+        swatch.style.background   = sub.colors[ai];
+        swatch.style.borderRadius = sub.shapes[ai] === 'circle' ? '50%' : '3px';
         const label = document.createElement('span');
-        label.textContent = `${atom.symbol} (in ${sub.formula})` + (cat ? ` — ${cat}` : ` — ${typeLabel}`);
+        label.textContent = `${atom.symbol} (in ${sub.formula})` +
+                            (cat ? ` — ${cat}` : ` — ${typeLabel}`);
         item.appendChild(swatch);
         item.appendChild(label);
         el.appendChild(item);
@@ -332,7 +364,7 @@ const Particulate = (() => {
     };
   }
 
-  // ── Bind controls ─────────────────────────────────────────────────────────
+  // ── Event bindings ────────────────────────────────────────────────────────
   document.getElementById('pd-formula').addEventListener('keydown', e => {
     if (e.key === 'Enter') parse();
   });
@@ -346,7 +378,6 @@ const Particulate = (() => {
     draw();
   });
 
-  // ── Quick examples ────────────────────────────────────────────────────────
   const EXAMPLES = {
     element:  'Na',
     diatomic: 'O2',
@@ -362,7 +393,6 @@ const Particulate = (() => {
     parse();
   }
 
-  // ── Export ────────────────────────────────────────────────────────────────
   function exportPNG() {
     draw();
     const link = document.createElement('a');
@@ -371,24 +401,14 @@ const Particulate = (() => {
     link.click();
   }
 
-  // ── Clear ─────────────────────────────────────────────────────────────────
   function clear() {
     document.getElementById('pd-formula').value = '';
     substances = [];
     document.getElementById('pd-substance-panels').innerHTML = '';
     document.getElementById('pd-legend').innerHTML = '';
-    canvas.width  = 400;
-    canvas.height = 400;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!isChecked('pd-transparent')) {
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-    if (beakerImg) ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
+    draw();
   }
 
-  // ── Initial draw ─────────────────────────────────────────────────────────
   draw();
-
   return { parse, clear, loadExample, exportPNG };
 })();
