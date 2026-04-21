@@ -202,6 +202,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .substance-row select {
   width: auto; font-size: 11px; padding: 4px 6px; flex: none;
 }
+.substance-size-row {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+}
+.substance-size-row input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
+.substance-size-row input[type="number"] { width: 46px; flex: none; font-size: 11px; }
+.size-row-lbl { font-size: 10px; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
 
 /* ── LEGEND ── */
 #pd-legend {
