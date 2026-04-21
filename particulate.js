@@ -2,19 +2,17 @@
 
 const Particulate = (() => {
 
-  // ── Canvas setup ─────────────────────────────────────────────────────────
+  // ── Canvas setup ──────────────────────────────────────────────────────────
   const canvas = document.getElementById('pd-canvas');
   const ctx    = canvas.getContext('2d');
   let beakerImg = null;
 
-  // Actual image size: 1254 × 1254
-  // Interior bounds measured from pixel analysis:
-  //   left wall inner edge  ≈ 365
-  //   right wall inner edge ≈ 912
-  //   top of open interior  ≈ 205
-  //   bottom of interior    ≈ 935
+  // Image is 1254×1254 with flood-fill transparent exterior.
+  // Interior particle zone (measured from pixel analysis):
+  //   left  ≈ 340   right ≈ 935
+  //   top   ≈ 250   bottom ≈ 940
   const BW = 1254, BH = 1254;
-  const BEAKER = { l: 365, r: 912, t: 205, b: 935 };
+  const ZONE = { l: 340, r: 935, t: 260, b: 935 };
 
   loadImageFromDataURI(BEAKER_IMG)
     .then(img => { beakerImg = img; draw(); })
@@ -32,7 +30,7 @@ const Particulate = (() => {
   function parseFormula(f) {
     f = f.replace(/\(s\)|\(l\)|\(g\)|\(aq\)/gi, '').trim();
     const atoms = [];
-    const re = /([A-Z][a-z]?)(\d*)/g;
+    const re    = /([A-Z][a-z]?)(\d*)/g;
     let m;
     while ((m = re.exec(f)) !== null) {
       if (m[1]) atoms.push({ symbol: m[1], count: parseInt(m[2] || '1', 10) });
@@ -48,7 +46,7 @@ const Particulate = (() => {
     return atoms.length > 0 && atoms.every(a => a.symbol === atoms[0].symbol);
   }
 
-  // ── UI: rebuild substance color/shape panels ──────────────────────────────
+  // ── UI: substance color/shape panels ─────────────────────────────────────
   function buildPanels() {
     const container = document.getElementById('pd-substance-panels');
     container.innerHTML = '';
@@ -62,24 +60,32 @@ const Particulate = (() => {
     substances.forEach((sub, i) => {
       const div = document.createElement('div');
       div.className = 'substance-panel';
-      div.innerHTML = `
-        <div class="substance-panel-title">${sub.formula}</div>
-        ${sub.atoms.map((atom, ai) => `
-          <div class="substance-row">
-            <label>${atom.symbol}</label>
-            <input type="color" id="pd-color-${i}-${ai}" value="${sub.colors[ai]}" />
-            <select id="pd-shape-${i}-${ai}">
-              ${SHAPES.map(s => `<option value="${s}"${sub.shapes[ai]===s?' selected':''}>${SHAPE_LABELS[s]} ${s}</option>`).join('')}
-            </select>
-          </div>
-        `).join('')}
-      `;
+
+      let rowsHTML = sub.atoms.map((atom, ai) => `
+        <div class="substance-row">
+          <label>${atom.symbol}</label>
+          <button class="color-swatch-btn" id="pd-sw-${i}-${ai}" style="background:${sub.colors[ai]};width:22px;height:22px;" title="Change color"></button>
+          <select id="pd-shape-${i}-${ai}">
+            ${SHAPES.map(s => `<option value="${s}"${sub.shapes[ai]===s?' selected':''}>${SHAPE_LABELS[s]} ${s}</option>`).join('')}
+          </select>
+        </div>
+      `).join('');
+
+      div.innerHTML = `<div class="substance-panel-title">${sub.formula}</div>${rowsHTML}`;
       container.appendChild(div);
 
       sub.atoms.forEach((atom, ai) => {
-        const colorEl = document.getElementById(`pd-color-${i}-${ai}`);
+        const swBtn  = document.getElementById(`pd-sw-${i}-${ai}`);
         const shapeEl = document.getElementById(`pd-shape-${i}-${ai}`);
-        colorEl.addEventListener('input', () => { sub.colors[ai] = colorEl.value; draw(); });
+
+        swBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          openColorPicker(swBtn, sub.colors[ai], col => {
+            sub.colors[ai] = col;
+            swBtn.style.background = col;
+            draw();
+          });
+        });
         shapeEl.addEventListener('change', () => { sub.shapes[ai] = shapeEl.value; draw(); });
       });
     });
@@ -115,8 +121,8 @@ const Particulate = (() => {
   // ── Shape drawing ─────────────────────────────────────────────────────────
   function drawShape(x, y, r, shape, color) {
     ctx.fillStyle   = color;
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-    ctx.lineWidth   = Math.max(0.8, r * 0.1);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth   = Math.max(1, r * 0.12);
     ctx.beginPath();
     switch (shape) {
       case 'circle':
@@ -129,17 +135,17 @@ const Particulate = (() => {
       }
       case 'triangle': {
         const h = r * 1.9;
-        ctx.moveTo(x, y - h * 0.6);
-        ctx.lineTo(x + h * 0.55, y + h * 0.4);
-        ctx.lineTo(x - h * 0.55, y + h * 0.4);
+        ctx.moveTo(x,          y - h * 0.65);
+        ctx.lineTo(x + h * 0.58, y + h * 0.38);
+        ctx.lineTo(x - h * 0.58, y + h * 0.38);
         ctx.closePath();
         break;
       }
       case 'diamond': {
         const d = r * 1.8;
-        ctx.moveTo(x, y - d * 0.6);
+        ctx.moveTo(x,           y - d * 0.62);
         ctx.lineTo(x + d * 0.45, y);
-        ctx.lineTo(x, y + d * 0.6);
+        ctx.lineTo(x,           y + d * 0.62);
         ctx.lineTo(x - d * 0.45, y);
         ctx.closePath();
         break;
@@ -147,8 +153,6 @@ const Particulate = (() => {
       case 'pentagon': {
         for (let k = 0; k < 5; k++) {
           const angle = (k * 2 * Math.PI / 5) - Math.PI / 2;
-          ctx.lineTo
-            ? null : void 0;
           const px = x + r * 1.3 * Math.cos(angle);
           const py = y + r * 1.3 * Math.sin(angle);
           k === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
@@ -163,7 +167,7 @@ const Particulate = (() => {
 
   function drawBond(x1, y1, x2, y2) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(160,160,160,0.55)';
+    ctx.strokeStyle = 'rgba(140,140,140,0.6)';
     ctx.lineWidth   = 1.5;
     ctx.setLineDash([3, 2]);
     ctx.beginPath();
@@ -175,6 +179,11 @@ const Particulate = (() => {
   }
 
   // ── Main draw ─────────────────────────────────────────────────────────────
+  // Draw order:
+  //   1. White (or transparent) canvas background
+  //   2. Particles (drawn directly onto canvas, no clipping needed)
+  //   3. Beaker image ON TOP  ← beaker has transparent exterior so particles
+  //      show through the glass; the glass walls paint over any stray particles
   function draw() {
     const zoom        = numVal('pd-zoom-range', 75) / 100;
     const countPerSub = Math.round(numVal('pd-count-range', 10));
@@ -185,39 +194,30 @@ const Particulate = (() => {
     canvas.height = Math.round(BH * zoom);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const il = BEAKER.l * zoom, ir = BEAKER.r * zoom;
-    const it = BEAKER.t * zoom, ib = BEAKER.b * zoom;
-    const iw = ir - il, ih = ib - it;
-
-    // ── Step 1: White background outside beaker (non-transparent mode) ────
+    // Step 1: background
     if (!transparent) {
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ── Step 2: Fill beaker interior white, then draw particles inside ────
-    ctx.save();
-    // Clip to beaker interior
-    ctx.beginPath();
-    ctx.rect(il, it, iw, ih);
-    ctx.clip();
+    // Scaled interior zone
+    const zl = ZONE.l * zoom, zr = ZONE.r * zoom;
+    const zt = ZONE.t * zoom, zb = ZONE.b * zoom;
+    const zw = zr - zl, zh = zb - zt;
 
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(il, it, iw, ih);
-
-    // Generate particle positions
-    const positions = [];
+    // Step 2: generate + draw particles
     if (substances.length) {
       const rng    = seededRng(42);
       const placed = [];
-      const margin = atomR * zoom * 2.5;
+      const margin = atomR * zoom * 2.8;
+      const positions = [];
 
       substances.forEach((sub, si) => {
         let attempts = 0, placed_count = 0;
-        while (placed_count < countPerSub && attempts < 8000) {
+        while (placed_count < countPerSub && attempts < 10000) {
           attempts++;
-          const cx = il + margin + rng() * (iw - margin * 2);
-          const cy = it + margin + rng() * (ih - margin * 2);
+          const cx = zl + margin + rng() * (zw - margin * 2);
+          const cy = zt + margin + rng() * (zh - margin * 2);
           const nAtoms = sub.atoms.length;
           const mAtoms = [];
 
@@ -226,20 +226,20 @@ const Particulate = (() => {
           } else {
             for (let ai = 0; ai < nAtoms; ai++) {
               const angle = (ai / nAtoms) * Math.PI * 2;
-              const dist  = atomR * zoom * 1.7;
+              const dist  = atomR * zoom * 1.8;
               mAtoms.push({ x: cx + dist * Math.cos(angle), y: cy + dist * Math.sin(angle) });
             }
           }
 
-          const r2 = atomR * zoom * 1.8;
+          const r2 = atomR * zoom * 1.9;
           const inBounds = mAtoms.every(a =>
-            a.x - r2 > il && a.x + r2 < ir &&
-            a.y - r2 > it && a.y + r2 < ib
+            a.x - r2 > zl && a.x + r2 < zr &&
+            a.y - r2 > zt && a.y + r2 < zb
           );
           if (!inBounds) continue;
 
           const overlaps = mAtoms.some(a =>
-            placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 * 1.3)
+            placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 * 1.25)
           );
           if (overlaps) continue;
 
@@ -250,74 +250,33 @@ const Particulate = (() => {
           placed_count++;
         }
       });
+
+      // Draw bonds
+      const byMol = {};
+      positions.forEach(p => {
+        const key = `${p.subIdx}-${p.molId}`;
+        (byMol[key] = byMol[key] || []).push(p);
+      });
+      Object.values(byMol).forEach(atoms => {
+        if (atoms.length < 2) return;
+        const { cx, cy } = atoms[0];
+        atoms.forEach(a => drawBond(a.x, a.y, cx, cy));
+      });
+
+      // Draw atoms
+      positions.forEach(p => {
+        const sub = substances[p.subIdx];
+        drawShape(p.x, p.y, atomR * zoom, sub.shapes[p.atomIdx], sub.colors[p.atomIdx]);
+      });
     }
 
-    // Draw bonds
-    const byMol = {};
-    positions.forEach(p => {
-      const key = `${p.subIdx}-${p.molId}`;
-      (byMol[key] = byMol[key] || []).push(p);
-    });
-    Object.values(byMol).forEach(atoms => {
-      if (atoms.length < 2) return;
-      const { cx, cy } = atoms[0];
-      atoms.forEach(a => drawBond(a.x, a.y, cx, cy));
-    });
-
-    positions.forEach(p => {
-      const sub = substances[p.subIdx];
-      drawShape(p.x, p.y, atomR * zoom, sub.shapes[p.atomIdx], sub.colors[p.atomIdx]);
-    });
-
-    ctx.restore(); // remove interior clip
-
-    // ── Step 3: Draw beaker glass on top of particles ─────────────────────
+    // Step 3: beaker overlay — draws on top of particles
+    // The PNG has transparent exterior so only glass walls + base paint over particles
     if (beakerImg) {
       ctx.drawImage(beakerImg, 0, 0, canvas.width, canvas.height);
     }
 
-    // ── Step 4: If transparent, erase exterior white ──────────────────────
-    if (transparent && beakerImg) {
-      eraseExterior(zoom);
-    }
-
     buildLegend();
-  }
-
-  // Erase pixels outside the beaker outline using destination-in with a mask
-  function eraseExterior(zoom) {
-    // Build mask on offscreen canvas: white = keep, transparent = erase
-    const tmp = document.createElement('canvas');
-    tmp.width  = canvas.width;
-    tmp.height = canvas.height;
-    const tc = tmp.getContext('2d');
-
-    // Outer beaker silhouette (from pixel analysis: outer walls ≈ 254–976, rows 138–1098)
-    const ol = 248 * zoom, or_ = 982 * zoom;
-    const ot = 134 * zoom, ob  = 1104 * zoom;
-    const cw = canvas.width, ch = canvas.height;
-
-    tc.fillStyle = '#fff';
-    tc.beginPath();
-    // Spout notch at top-left (the pour spout)
-    const spoutL = ol, spoutT = ot;
-    const spoutW = (or_ - ol) * 0.22;
-    const rimT   = ot + 60 * zoom;
-    // Outer shape: start at top-left of rim
-    tc.moveTo(ol + spoutW, spoutT);                          // spout left
-    tc.quadraticCurveTo(ol + spoutW * 0.4, spoutT, ol, rimT); // spout curve
-    tc.lineTo(ol - 5 * zoom, ob - 90 * zoom);               // left side
-    tc.quadraticCurveTo(ol, ob + 5 * zoom, (ol + or_) / 2, ob + 5 * zoom); // bottom arc
-    tc.quadraticCurveTo(or_, ob + 5 * zoom, or_ + 5 * zoom, ob - 90 * zoom); // right bottom
-    tc.lineTo(or_ + 5 * zoom, rimT);                         // right side
-    tc.quadraticCurveTo(or_, spoutT, ol + spoutW, spoutT);  // right rim
-    tc.closePath();
-    tc.fill();
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(tmp, 0, 0);
-    ctx.restore();
   }
 
   // ── Legend ────────────────────────────────────────────────────────────────
