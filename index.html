@@ -13,12 +13,12 @@
   <div class="app-logo">
     <div class="logo-icon">
       <svg width="38" height="38" viewBox="0 0 38 38" xmlns="http://www.w3.org/2000/svg">
-        <!-- blue circle (back) -->
-        <circle cx="12" cy="24" r="11" fill="#4a90e2" opacity="0.95"/>
-        <!-- red square (middle) — shifted left so right/bottom edges peek out past triangle -->
-        <rect x="11" y="9" width="18" height="18" rx="2" fill="#e2604a" opacity="0.95"/>
-        <!-- green triangle (front) — slightly smaller so square peeks out on right/bottom -->
-        <polygon points="18,3 32,30 4,30" fill="#4ae28a" opacity="0.90"/>
+        <!-- blue circle — bottom-left -->
+        <circle cx="11" cy="26" r="10" fill="#4a90e2" opacity="0.95"/>
+        <!-- green triangle — bottom-right -->
+        <polygon points="26,8 38,34 14,34" fill="#4ae28a" opacity="0.92"/>
+        <!-- red square — top-center, drawn last so it sits on top -->
+        <rect x="9" y="4" width="17" height="17" rx="2" fill="#e2604a" opacity="0.97"/>
       </svg>
     </div>
     <div class="logo-text">
@@ -26,7 +26,7 @@
       <p>Element · Compound · Mixture — canvas-based particle diagrams</p>
     </div>
   </div>
-  <div class="app-version">v1.9</div>
+  <div class="app-version">v2.0</div>
 </header>
 
 <main class="app-body" style="padding:20px;">
@@ -94,7 +94,32 @@
         </div>
       </div>
 
-      <!-- Dynamic substance color/shape panels injected here -->
+      <div class="control-group">
+        <div class="group-title">RANDOMNESS</div>
+        <label>Scatter / Rotation</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-random-range" min="0" max="100" value="50" />
+          <input type="number" id="pd-random-num" value="50" min="0" max="100" step="1" style="width:60px;" />
+        </div>
+        <div class="mini-note">0 = ordered grid · 100 = fully random scatter &amp; rotation</div>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">BOND STYLE</div>
+        <label>Bond Thickness (px)</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-bond-thick-range" min="5" max="40" value="15" />
+          <input type="number" id="pd-bond-thick-num" value="15" min="5" max="40" step="1" style="width:60px;" />
+        </div>
+        <label>Bond Length (fraction)</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-bond-len-range" min="10" max="100" value="90" />
+          <input type="number" id="pd-bond-len-num" value="90" min="10" max="100" step="1" style="width:60px;" />
+        </div>
+        <div class="mini-note">Length trims each bond line — lower = shorter gaps between atoms</div>
+      </div>
+
+      <!-- Dynamic substance color/shape/size panels injected here -->
       <div id="pd-substance-panels"></div>
 
       <div class="control-group">
