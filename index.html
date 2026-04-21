@@ -1,0 +1,124 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Particulate Diagram Builder</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-logo">
+    <div class="logo-icon">⚗️</div>
+    <div class="logo-text">
+      <h1>Particulate Diagram Builder</h1>
+      <p>Element · Compound · Mixture — canvas-based particle diagrams</p>
+    </div>
+  </div>
+  <div class="app-version">v1.0</div>
+</header>
+
+<main class="app-body" style="padding:20px;">
+
+  <div class="panel-layout">
+
+    <!-- ══ CONTROLS ══ -->
+    <aside class="controls-panel">
+
+      <div class="control-group">
+        <div class="group-title">SUBSTANCE INPUT</div>
+        <label>Formula / Mixture</label>
+        <input type="text" id="pd-formula" class="formula-input"
+               placeholder="e.g. H2O  or  Na + Cl2  or  NaCl + H2O"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+        <div class="mini-note">
+          Single element: <strong>Na</strong> &nbsp;|&nbsp;
+          Compound: <strong>H2O</strong><br>
+          Mixture: <strong>Na + Cl2</strong> &nbsp;|&nbsp;
+          <strong>NaCl + H2O</strong>
+        </div>
+        <button class="action-btn primary" onclick="Particulate.parse()" style="margin-top:10px;">
+          🎨 Generate Diagram
+        </button>
+        <button class="action-btn" onclick="Particulate.clear()">Clear</button>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">QUICK EXAMPLES</div>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button class="style-btn" onclick="Particulate.loadExample('element')">Na — Element</button>
+          <button class="style-btn" onclick="Particulate.loadExample('diatomic')">O2 — Diatomic Element</button>
+          <button class="style-btn" onclick="Particulate.loadExample('compound')">H2O — Compound</button>
+          <button class="style-btn" onclick="Particulate.loadExample('me')">Na + Ca — Mixture of Elements</button>
+          <button class="style-btn" onclick="Particulate.loadExample('mc')">NaCl + CaCl2 — Mixture of Compounds</button>
+          <button class="style-btn" onclick="Particulate.loadExample('mec')">Na + NaCl — Mixture of Element &amp; Compound</button>
+          <button class="style-btn" onclick="Particulate.loadExample('three')">H2O + NaCl + CO2 — Three-way Mix</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">PARTICLE COUNT</div>
+        <label>Particles per substance</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-count-range" min="3" max="30" value="10" />
+          <input type="number" id="pd-count-num" value="10" min="3" max="30" step="1" style="width:60px;" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">PARTICLE SIZE</div>
+        <label>Atom radius (px)</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-size-range" min="6" max="32" value="14" />
+          <input type="number" id="pd-size-num" value="14" min="6" max="32" step="1" style="width:60px;" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">ZOOM</div>
+        <label>Image Zoom (%)</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-zoom-range" min="30" max="150" value="75" />
+          <input type="number" id="pd-zoom-num" value="75" min="30" max="150" step="1" style="width:60px;" />
+        </div>
+      </div>
+
+      <!-- Dynamic substance color/shape panels injected here -->
+      <div id="pd-substance-panels"></div>
+
+      <div class="control-group">
+        <div class="group-title">EXPORT</div>
+        <label class="toggle-label">
+          <input type="checkbox" id="pd-transparent" />
+          Transparent background
+        </label>
+        <button class="export-btn" onclick="Particulate.exportPNG()">⬇ Export PNG</button>
+      </div>
+
+    </aside>
+
+    <!-- ══ PREVIEW ══ -->
+    <div class="preview-panel">
+      <div class="preview-label">Live Preview — beaker particle diagram</div>
+      <div class="canvas-scroll-wrapper">
+        <div id="pd-checker" class="checker-bg white-bg">
+          <canvas id="pd-canvas"></canvas>
+        </div>
+      </div>
+      <div id="pd-legend" style="margin-top:12px;"></div>
+    </div>
+
+  </div>
+
+</main>
+
+<div id="alert-container"></div>
+
+<script src="beaker-image.js"></script>
+<script src="app.js"></script>
+<script src="particulate.js"></script>
+
+</body>
+</html>
