@@ -35,7 +35,7 @@ body {
   position: sticky; top: 0; z-index: 100;
 }
 .app-logo { display: flex; align-items: center; gap: 12px; }
-.logo-icon { font-size: 28px; }
+.logo-icon { display: flex; align-items: center; }
 .logo-text h1 { font-size: 18px; font-weight: 700; color: var(--text); }
 .logo-text p  { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
 .app-version  { font-size: 11px; color: var(--text-dim); background: var(--bg3);
