@@ -26,7 +26,7 @@
       <p>Element · Compound · Mixture — canvas-based particle diagrams</p>
     </div>
   </div>
-  <div class="app-version">v2.2</div>
+  <div class="app-version">v2.3</div>
 </header>
 
 <main class="app-body" style="padding:20px;">
@@ -133,12 +133,12 @@
           <input type="range" id="pd-bond-thick-range" min="5" max="40" value="15" />
           <input type="number" id="pd-bond-thick-num" value="15" min="5" max="40" step="1" style="width:60px;" />
         </div>
-        <label>Bond Length (fraction)</label>
+        <label>Bond Spacing (%)</label>
         <div class="slider-input-row">
-          <input type="range" id="pd-bond-len-range" min="10" max="100" value="100" />
-          <input type="number" id="pd-bond-len-num" value="100" min="10" max="100" step="1" style="width:60px;" />
+          <input type="range" id="pd-bond-space-range" min="100" max="300" value="100" />
+          <input type="number" id="pd-bond-space-num" value="100" min="100" max="300" step="1" style="width:60px;" />
         </div>
-        <div class="mini-note">Length trims each bond line — lower = shorter gaps between atoms</div>
+        <div class="mini-note">100% = default · higher = more distance between bonded atoms. Raise this when atoms inside a molecule overlap.</div>
       </div>
 
       <!-- Dynamic substance color/shape/size panels injected here -->
