@@ -5,18 +5,18 @@
 //   where x,y are unit-normalized offsets from molecule center (roughly -1..+1)
 //   and bond order is 1, 2, or 3.
 //
-// This engine does NOT draw anything. It only decides:
-//   - which atom is central
-//   - where each atom sits (2D layout, angles evenly distributed)
-//   - how many bonds connect each pair (single / double / triple)
+// Resolution order for a given formula:
+//   1. Look up canonical formula in MOLECULE_DB (ring + substituents). If found, use ring layout.
+//   2. If 1 atom, return single atom.
+//   3. If 2 atoms, diatomic layout (auto bond order from typical bonds).
+//   4. If 3+ atoms, pick central atom, arrange terminals around it, compute bond orders.
+//   5. If no central atom can be determined, fall back to an N-ring with single bonds.
 //
-// It deliberately ignores lone pairs, formal charges, and resonance.
-// For ionic compounds (e.g. NaCl), ions are treated as molecular — connected by a single bond.
+// Ignores formal charges, lone pairs, resonance.
 
 const LewisEngine = (() => {
 
   // ── Periodic reference data ────────────────────────────────────────────
-  // Valence electrons by main-group position. Only common teaching elements listed.
   const VALENCE = {
     H:1, He:2,
     Li:1, Be:2, B:3, C:4, N:5, O:6, F:7, Ne:8,
@@ -24,12 +24,10 @@ const LewisEngine = (() => {
     K:1,  Ca:2, Ga:3, Ge:4, As:5, Se:6, Br:7, Kr:8,
     Rb:1, Sr:2, In:3, Sn:4, Sb:5, Te:6, I:7,  Xe:8,
     Cs:1, Ba:2,
-    // Transition metals — treat as 2+ by default (oxidation-state heuristic; good enough for diagrams)
     Fe:2, Cu:2, Zn:2, Ag:1, Ni:2, Co:2, Mn:2, Cr:3, Ti:4,
     Pb:2, Hg:2, Au:1, Pt:2,
   };
 
-  // Pauling electronegativity (approximate). Lower = more likely to be central.
   const EN = {
     H:2.20, He:0,
     Li:0.98, Be:1.57, B:2.04, C:2.55, N:3.04, O:3.44, F:3.98, Ne:0,
@@ -41,13 +39,11 @@ const LewisEngine = (() => {
     Pb:1.87, Hg:2.00, Au:2.54, Pt:2.28,
   };
 
-  // Number of bonds each element typically forms in neutral molecules (used for bond-order math)
   const TYPICAL_BONDS = {
     H:1,  F:1,  Cl:1, Br:1, I:1,
     O:2,  S:2,  Se:2,
     N:3,  P:3,
     C:4,  Si:4,
-    // Metals — assumed to form single bonds equal to their valence electrons
     Na:1, K:1,  Li:1, Rb:1, Cs:1, Ag:1, Cu:1, Au:1,
     Mg:2, Ca:2, Ba:2, Sr:2, Be:2, Zn:2, Fe:2, Ni:2, Co:2, Mn:2, Hg:2, Pb:2, Pt:2,
     Al:3, B:3,  Ga:3, Cr:3,
@@ -55,7 +51,6 @@ const LewisEngine = (() => {
   };
 
   // ── Expand atom list ───────────────────────────────────────────────────
-  // [{symbol:'H',count:2},{symbol:'O',count:1}] -> ['H','H','O']
   function expand(atomsIn) {
     const out = [];
     atomsIn.forEach(a => {
@@ -64,28 +59,29 @@ const LewisEngine = (() => {
     return out;
   }
 
+  // ── Canonical formula (Hill order: C first, H second, rest alphabetical) ─
+  function canonicalFormula(parsedAtoms) {
+    const counts = {};
+    parsedAtoms.forEach(a => { counts[a.symbol] = (counts[a.symbol] || 0) + a.count; });
+    const keys = Object.keys(counts);
+    keys.sort((a, b) => {
+      if (a === 'C' && b !== 'C') return -1;
+      if (b === 'C' && a !== 'C') return 1;
+      if (a === 'H' && b !== 'H') return -1;
+      if (b === 'H' && a !== 'H') return 1;
+      return a.localeCompare(b);
+    });
+    return keys.map(k => k + (counts[k] > 1 ? counts[k] : '')).join('');
+  }
+
   // ── Central atom selection ─────────────────────────────────────────────
-  // Rules (in order):
-  //  1. H is NEVER central
-  //  2. If exactly one non-H atom type exists, that element is central
-  //     (handles CH4, NH3, H2O, HCN, etc.)
-  //  3. Otherwise lowest-EN atom is central (handles CO2, SO2, PCl3, etc.)
-  //  4. Single-atom / diatomic have no "central" — caller handles that case.
   function pickCentralIndex(symbols) {
-    if (symbols.length < 3) return -1;  // diatomic or single: no center
+    if (symbols.length < 3) return -1;
     const nonHIdx = symbols.map((s, i) => s === 'H' ? -1 : i).filter(i => i >= 0);
     if (nonHIdx.length === 0) return -1;
     if (nonHIdx.length === 1) return nonHIdx[0];
-
-    // Find unique non-H elements
     const uniqueNonH = [...new Set(nonHIdx.map(i => symbols[i]))];
-    if (uniqueNonH.length === 1) {
-      // All non-H atoms are the same element — pick any (first). e.g. CH2O where we treat...
-      // Actually this branch handles cases like H2O2 (all non-H is O). Pick first O.
-      return nonHIdx[0];
-    }
-
-    // Multiple non-H elements: pick lowest EN as central
+    if (uniqueNonH.length === 1) return nonHIdx[0];
     let bestIdx = nonHIdx[0];
     let bestEN  = EN[symbols[bestIdx]] ?? 99;
     for (const i of nonHIdx) {
@@ -96,34 +92,12 @@ const LewisEngine = (() => {
   }
 
   // ── Bond order calculation ─────────────────────────────────────────────
-  // For each terminal atom, decide how many bonds it shares with the central atom.
-  // Strategy:
-  //   - Every terminal starts with 1 bond (single bond)
-  //   - "Extra" bonds needed = (central atom's typical bond count) - (number of terminals)
-  //     These extras are distributed to terminals that can accept them (have typicalBonds > 1)
-  //   - Cap any single terminal at triple bond (order 3) max
-  //
-  // Examples:
-  //   H2O:  O central, 2 H terminals. Central needs 2 bonds, 2 terminals, extras = 0. All single.
-  //   CO2:  C central, 2 O terminals. Central needs 4 bonds, 2 terminals, extras = 2. Each O gets 1 extra → double bonds.
-  //   CH4:  C central, 4 H terminals. Central needs 4 bonds, 4 terminals, extras = 0. All single.
-  //   SO2:  S central, 2 O terminals. Central needs 2 bonds but has extras to spare via expanded octet...
-  //         We use central = max(typical, # terminals). For S=2, terminals=2, extras=0, single+single.
-  //         To draw SO2 as S=O-S we'd need to recognize S as hypervalent. Keep simple: single bonds.
-  //   NH3:  N central, 3 H. Central=3, terminals=3, single bonds.
-  //   HCN:  C central, 1 H + 1 N. Terminals=2, central needs 4 bonds. Extras=2.
-  //         H can only accept 1 bond (typical=1), so both extras go to N → triple bond.
   function computeBondOrders(centralSym, terminalSyms) {
     const n = terminalSyms.length;
     const orders = new Array(n).fill(1);
     if (n === 0) return orders;
-
     const centralNeeds = Math.max(TYPICAL_BONDS[centralSym] ?? n, n);
     let extras = centralNeeds - n;
-
-    // Distribute extras in passes to terminals that can accept more bonds
-    // Pass 1: any terminal with typicalBonds > 1 gets +1 (so a single becomes double)
-    // Pass 2: any terminal with typicalBonds > 2 (i.e. N, C) can get another +1 → triple
     while (extras > 0) {
       let added = false;
       for (let i = 0; i < n && extras > 0; i++) {
@@ -134,21 +108,97 @@ const LewisEngine = (() => {
           added = true;
         }
       }
-      if (!added) break; // no terminal can accept more
+      if (!added) break;
     }
-
     return orders;
   }
 
-  // ── Layout ─────────────────────────────────────────────────────────────
-  // Returns { atoms:[{symbol,x,y}], bonds:[{i,j,order}] }
-  // Coordinates are normalized roughly to [-1, 1].
-  //
-  // Three cases:
-  //   1 atom  → single atom at origin, no bonds
-  //   2 atoms → horizontal pair, bond between them
-  //   3+      → central atom at origin, terminals evenly spaced around
+  // ── Ring-based layout from MOLECULE_DB entry ─────────────────────────────
+  // Given a DB entry, place ring atoms as a regular polygon, then arrange
+  // substituents radially outward from each ring atom.
+  function layoutFromDB(entry) {
+    const ring  = entry.ring;
+    const rn    = ring.length;
+    const atoms = [];
+    const bonds = [];
+
+    // Ring radius (normalized). Larger rings = bigger radius.
+    const ringR = rn <= 3 ? 0.55 : rn <= 4 ? 0.7 : rn <= 5 ? 0.85 : 1.0;
+
+    // Place ring atoms clockwise, starting from the top (−π/2)
+    const ringPositions = [];
+    for (let k = 0; k < rn; k++) {
+      const angle = (k / rn) * 2 * Math.PI - Math.PI / 2;
+      const x = ringR * Math.cos(angle);
+      const y = ringR * Math.sin(angle);
+      atoms.push({ symbol: ring[k], x, y });
+      ringPositions.push({ x, y, angle });
+    }
+
+    // Ring bonds between consecutive atoms
+    for (let k = 0; k < rn; k++) {
+      bonds.push({ i: k, j: (k + 1) % rn, order: entry.ringBonds[k] || 1 });
+    }
+
+    // Group substituents by the ring atom they attach to
+    const subsByRing = {};
+    (entry.substituents || []).forEach(s => {
+      if (!subsByRing[s.on]) subsByRing[s.on] = [];
+      subsByRing[s.on].push(s);
+    });
+
+    // Bond length for substituent chains (shorter than ring radius for compactness)
+    const subBondLen = 0.42;
+
+    Object.keys(subsByRing).forEach(onKey => {
+      const on       = parseInt(onKey);
+      const subs     = subsByRing[on];
+      const nSubs    = subs.length;
+      const outAngle = ringPositions[on].angle;
+      // Fan substituents around the outward radial direction.
+      // Spread grows with more substituents but is capped.
+      const spread = Math.min(Math.PI * 0.85, (nSubs - 1) * 0.5);
+
+      subs.forEach((sub, si) => {
+        let branchAngle;
+        if (nSubs === 1) {
+          branchAngle = outAngle;
+        } else {
+          branchAngle = outAngle - spread / 2 + (si / (nSubs - 1)) * spread;
+        }
+
+        let curIdx = on;
+        let curX   = ringPositions[on].x;
+        let curY   = ringPositions[on].y;
+
+        sub.atoms.forEach(atm => {
+          const nx = curX + subBondLen * Math.cos(branchAngle);
+          const ny = curY + subBondLen * Math.sin(branchAngle);
+          const newIdx = atoms.length;
+          atoms.push({ symbol: atm.symbol, x: nx, y: ny });
+          bonds.push({ i: curIdx, j: newIdx, order: atm.order || 1 });
+          curIdx = newIdx;
+          curX = nx;
+          curY = ny;
+        });
+      });
+    });
+
+    return { atoms, bonds };
+  }
+
+  // ── Main layout function ──────────────────────────────────────────────────
   function layout(parsedAtoms) {
+    // Step 1: check the molecule database for a known ring structure.
+    // MOLECULE_DB is a global (loaded from molecule-db.js before this file).
+    if (typeof MOLECULE_DB !== 'undefined') {
+      const key = canonicalFormula(parsedAtoms);
+      if (MOLECULE_DB[key]) {
+        return layoutFromDB(MOLECULE_DB[key]);
+      }
+    }
+
+    // Step 2: algorithmic layout
     const symbols = expand(parsedAtoms);
     const N = symbols.length;
 
@@ -162,17 +212,12 @@ const LewisEngine = (() => {
     }
 
     if (N === 2) {
-      // Diatomic: place horizontally, bond order from typical bond count
-      // For same-element diatomics: H2=1, O2=2, N2=3, halogens=1
       const s1 = symbols[0], s2 = symbols[1];
       let order = 1;
       if (s1 === s2) {
-        // Homonuclear: use typical bond count
         const t = TYPICAL_BONDS[s1] ?? 1;
         order = Math.min(3, t);
       } else {
-        // Heteronuclear diatomic (HF, HCl, CO, NO, etc.)
-        // Use min of the two typicals, capped at 3
         const t1 = TYPICAL_BONDS[s1] ?? 1;
         const t2 = TYPICAL_BONDS[s2] ?? 1;
         order = Math.min(3, Math.min(t1, t2));
@@ -186,10 +231,10 @@ const LewisEngine = (() => {
       };
     }
 
-    // 3+ atoms: pick central, place terminals around it
+    // 3+ atoms: central-atom layout
     const centralIdx = pickCentralIndex(symbols);
     if (centralIdx < 0) {
-      // Fallback: ring layout, single bonds between consecutive atoms
+      // Fallback: ring layout with single bonds
       const atoms = symbols.map((sym, k) => {
         const a = (k / N) * 2 * Math.PI - Math.PI / 2;
         return { symbol: sym, x: Math.cos(a), y: Math.sin(a) };
@@ -201,12 +246,11 @@ const LewisEngine = (() => {
       return { atoms, bonds };
     }
 
-    const centralSym = symbols[centralIdx];
+    const centralSym      = symbols[centralIdx];
     const terminalIndices = symbols.map((_, i) => i).filter(i => i !== centralIdx);
     const terminalSyms    = terminalIndices.map(i => symbols[i]);
     const orders          = computeBondOrders(centralSym, terminalSyms);
 
-    // Build atom list: central first, then terminals in their original order
     const outAtoms = [{ symbol: centralSym, x: 0, y: 0 }];
     const numT     = terminalIndices.length;
     terminalIndices.forEach((origIdx, k) => {
@@ -214,12 +258,10 @@ const LewisEngine = (() => {
       outAtoms.push({ symbol: symbols[origIdx], x: Math.cos(angle), y: Math.sin(angle) });
     });
 
-    // Bonds: each terminal connects to the central (index 0)
     const bonds = orders.map((order, k) => ({ i: 0, j: k + 1, order }));
-
     return { atoms: outAtoms, bonds };
   }
 
-  return { layout };
+  return { layout, canonicalFormula };
 
 })();
