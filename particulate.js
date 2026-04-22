@@ -292,7 +292,7 @@ const Particulate = (() => {
   // In advanced mode: use LewisEngine.
   //
   // elemIdx points into sub.atoms (unique element list) so we can look up color/shape/size.
-  function buildMoleculeLayout(sub, advanced, atomRadiusPx, molRot) {
+  function buildMoleculeLayout(sub, advanced, atomRadiusPx, molRot, bondSpacing) {
     // Map element symbol -> index in sub.atoms (for color/shape lookup)
     const elemIdxBySym = {};
     sub.atoms.forEach((a, i) => { elemIdxBySym[a.symbol] = i; });
@@ -302,8 +302,8 @@ const Particulate = (() => {
     if (advanced) {
       const lay = LewisEngine.layout(sub.atoms);
       // lay.atoms have normalized x,y in roughly [-1,1]. Scale to pixel units.
-      // Bond length: atomRadiusPx * 2.4 between centers
-      const scale = atomRadiusPx * 2.4;
+      // bondSpacing multiplier (1.0..3.0) increases physical distance between atoms
+      const scale = atomRadiusPx * 2.4 * bondSpacing;
       const cosR = Math.cos(molRot), sinR = Math.sin(molRot);
       const atoms = lay.atoms.map(a => {
         const px = a.x * scale, py = a.y * scale;
@@ -328,7 +328,7 @@ const Particulate = (() => {
     if (expandedSyms.length === 1) {
       atoms.push({ x: 0, y: 0, symbol: expandedSyms[0], elemIdx: elemIdxBySym[expandedSyms[0]] });
     } else {
-      const bondDist = atomRadiusPx * 1.9;
+      const bondDist = atomRadiusPx * 1.9 * bondSpacing;
       expandedSyms.forEach((sym, ai) => {
         const angle = molRot + (ai / expandedSyms.length) * Math.PI * 2;
         atoms.push({
@@ -338,11 +338,6 @@ const Particulate = (() => {
           elemIdx: elemIdxBySym[sym] ?? 0
         });
       });
-      // Basic-mode bonds: center-to-each-atom, order 1 (drawn as straight lines from first atom)
-      // Actually in the existing code, bonds go from each atom to molecule center (cx,cy),
-      // not between atoms. We'll replicate that by adding a virtual center atom at index -1.
-      // To keep the bond representation consistent, we'll encode basic-mode bonds differently
-      // in draw() using the molecule center coords directly (not atom-to-atom).
     }
     return { atoms, bonds, basicMode: true };
   }
@@ -355,7 +350,7 @@ const Particulate = (() => {
     const transparent = isChecked('pd-transparent');
     const randomness  = numVal('pd-random-range',     50) / 100;
     const bondThick   = numVal('pd-bond-thick-range', 15) / 10;
-    const bondLen     = numVal('pd-bond-len-range',  100) / 100;
+    const bondLen     = numVal('pd-bond-space-range', 100) / 100;  // now 1.0..3.0 multiplier
     const spacing     = numVal('pd-spacing-range',    20) / 100;  // 0..1.5 range
     const advanced    = isChecked('pd-advanced-mode');
 
@@ -409,7 +404,7 @@ const Particulate = (() => {
         const molRot = randomness * (rng() * 2 - 1) * Math.PI;
 
         const maxMult  = Math.max(...sub.sizeMults);
-        const layout   = buildMoleculeLayout(sub, advanced, baseR * maxMult, molRot);
+        const layout   = buildMoleculeLayout(sub, advanced, baseR * maxMult, molRot, bondLen);
 
         // Compute absolute atom positions for this molecule
         const mAtoms = layout.atoms.map(a => ({
@@ -452,14 +447,14 @@ const Particulate = (() => {
         // Basic mode: center-to-atom bonds, order 1
         if (mol.mAtoms.length < 2) return;
         mol.mAtoms.forEach(a => {
-          drawBond(a.x, a.y, mol.cx, mol.cy, bondThick, bondLen, 1);
+          drawBond(a.x, a.y, mol.cx, mol.cy, bondThick, 1.0, 1);
         });
       } else {
         // Advanced mode: explicit bonds from layout
         mol.layout.bonds.forEach(b => {
           const a1 = mol.mAtoms[b.i], a2 = mol.mAtoms[b.j];
           if (!a1 || !a2) return;
-          drawBond(a1.x, a1.y, a2.x, a2.y, bondThick, bondLen, b.order);
+          drawBond(a1.x, a1.y, a2.x, a2.y, bondThick, 1.0, b.order);
         });
       }
     });
@@ -519,7 +514,7 @@ const Particulate = (() => {
   bindSliderWithInput('pd-zoom-range',       'pd-zoom-num',       draw);
   bindSliderWithInput('pd-random-range',     'pd-random-num',     draw);
   bindSliderWithInput('pd-bond-thick-range', 'pd-bond-thick-num', draw);
-  bindSliderWithInput('pd-bond-len-range',   'pd-bond-len-num',   draw);
+  bindSliderWithInput('pd-bond-space-range', 'pd-bond-space-num', draw);
   bindSliderWithInput('pd-spacing-range',    'pd-spacing-num',    draw);
   document.getElementById('pd-transparent').addEventListener('change', () => {
     updateBgClass('pd-checker', isChecked('pd-transparent')); draw();
