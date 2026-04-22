@@ -68,6 +68,18 @@
       </div>
 
       <div class="control-group">
+        <div class="group-title">ADVANCED MODE</div>
+        <label class="toggle-label">
+          <input type="checkbox" id="pd-advanced-mode" />
+          Draw Lewis bonds with element symbols
+        </label>
+        <div class="mini-note">
+          When on: atoms display their element symbols, bonds show correct order (single, double, triple),
+          and molecules follow a proper Lewis-structure layout.
+        </div>
+      </div>
+
+      <div class="control-group">
         <div class="group-title">PARTICLE COUNT</div>
         <label>Particles per substance</label>
         <div class="slider-input-row">
@@ -102,6 +114,16 @@
           <input type="number" id="pd-random-num" value="50" min="0" max="100" step="1" style="width:60px;" />
         </div>
         <div class="mini-note">0 = ordered grid · 100 = fully random scatter &amp; rotation</div>
+      </div>
+
+      <div class="control-group">
+        <div class="group-title">SPACING</div>
+        <label>Gap between particles (%)</label>
+        <div class="slider-input-row">
+          <input type="range" id="pd-spacing-range" min="0" max="150" value="20" />
+          <input type="number" id="pd-spacing-num" value="20" min="0" max="150" step="1" style="width:60px;" />
+        </div>
+        <div class="mini-note">Extra space between particles from the same or different substances</div>
       </div>
 
       <div class="control-group">
@@ -153,6 +175,7 @@
 <script src="beaker-image.js"></script>
 <script src="app.js"></script>
 <script src="color-picker.js"></script>
+<script src="lewis-engine.js"></script>
 <script src="particulate.js"></script>
 
 </body>
