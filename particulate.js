@@ -231,18 +231,120 @@ const Particulate = (() => {
     ctx.restore();
   }
 
-  // ── Bond drawing — solid line ─────────────────────────────────────────────
-  function drawBond(x1, y1, x2, y2, thickness, lengthFrac) {
-    const dx = x2 - x1, dy = y2 - y1;
-    const trim = (1 - Math.min(1, Math.max(0, lengthFrac))) / 2;
+  // ── Symbol text inside shape ──────────────────────────────────────────────
+  function drawSymbol(x, y, r, symbol) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(140,140,140,0.65)';
-    ctx.lineWidth   = Math.max(0.5, thickness);
-    ctx.beginPath();
-    ctx.moveTo(x1 + dx * trim, y1 + dy * trim);
-    ctx.lineTo(x2 - dx * trim, y2 - dy * trim);
-    ctx.stroke();
+    ctx.fillStyle    = '#000';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    // Scale font to fit inside shape — shorter symbols can use larger text
+    const fontSize = Math.max(8, r * (symbol.length === 1 ? 1.05 : 0.85));
+    ctx.font = `bold ${fontSize}px 'Segoe UI', sans-serif`;
+    ctx.fillText(symbol, x, y);
     ctx.restore();
+  }
+
+  // ── Bond drawing — solid line, supports order 1/2/3 ──────────────────────
+  function drawBond(x1, y1, x2, y2, thickness, lengthFrac, order) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+    if (dist === 0) return;
+    const trim = (1 - Math.min(1, Math.max(0, lengthFrac))) / 2;
+    const sx = x1 + dx * trim, sy = y1 + dy * trim;
+    const ex = x2 - dx * trim, ey = y2 - dy * trim;
+
+    // Perpendicular unit vector for offsetting parallel lines
+    const perpX = -dy / dist, perpY = dx / dist;
+    // Space between parallel lines scales with thickness
+    const sep = Math.max(3, thickness * 1.8);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(140,140,140,0.75)';
+    ctx.lineWidth   = Math.max(0.5, thickness);
+    ctx.lineCap     = 'round';
+
+    const o = order || 1;
+    if (o === 1) {
+      ctx.beginPath();
+      ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+      ctx.stroke();
+    } else if (o === 2) {
+      for (const d of [-sep/2, sep/2]) {
+        ctx.beginPath();
+        ctx.moveTo(sx + perpX * d, sy + perpY * d);
+        ctx.lineTo(ex + perpX * d, ey + perpY * d);
+        ctx.stroke();
+      }
+    } else {
+      for (const d of [-sep, 0, sep]) {
+        ctx.beginPath();
+        ctx.moveTo(sx + perpX * d, sy + perpY * d);
+        ctx.lineTo(ex + perpX * d, ey + perpY * d);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ── Build a per-molecule layout ──────────────────────────────────────────
+  // Returns { atoms: [{x, y, elemIdx}], bonds: [{i, j, order}] } scaled by atomRadiusPx.
+  // In basic mode: generic circular layout + single bonds between adjacent atoms and center.
+  // In advanced mode: use LewisEngine.
+  //
+  // elemIdx points into sub.atoms (unique element list) so we can look up color/shape/size.
+  function buildMoleculeLayout(sub, advanced, atomRadiusPx, molRot) {
+    // Map element symbol -> index in sub.atoms (for color/shape lookup)
+    const elemIdxBySym = {};
+    sub.atoms.forEach((a, i) => { elemIdxBySym[a.symbol] = i; });
+
+    const nAtomsTotal = sub.atoms.reduce((n, a) => n + a.count, 0);
+
+    if (advanced) {
+      const lay = LewisEngine.layout(sub.atoms);
+      // lay.atoms have normalized x,y in roughly [-1,1]. Scale to pixel units.
+      // Bond length: atomRadiusPx * 2.4 between centers
+      const scale = atomRadiusPx * 2.4;
+      const cosR = Math.cos(molRot), sinR = Math.sin(molRot);
+      const atoms = lay.atoms.map(a => {
+        const px = a.x * scale, py = a.y * scale;
+        return {
+          x: px * cosR - py * sinR,
+          y: px * sinR + py * cosR,
+          symbol: a.symbol,
+          elemIdx: elemIdxBySym[a.symbol] ?? 0
+        };
+      });
+      return { atoms, bonds: lay.bonds };
+    }
+
+    // Basic mode: preserve existing behavior — expand atoms, ring around center.
+    const expandedSyms = [];
+    sub.atoms.forEach(a => {
+      for (let k = 0; k < a.count; k++) expandedSyms.push(a.symbol);
+    });
+
+    const atoms = [];
+    const bonds = [];
+    if (expandedSyms.length === 1) {
+      atoms.push({ x: 0, y: 0, symbol: expandedSyms[0], elemIdx: elemIdxBySym[expandedSyms[0]] });
+    } else {
+      const bondDist = atomRadiusPx * 1.9;
+      expandedSyms.forEach((sym, ai) => {
+        const angle = molRot + (ai / expandedSyms.length) * Math.PI * 2;
+        atoms.push({
+          x: bondDist * Math.cos(angle),
+          y: bondDist * Math.sin(angle),
+          symbol: sym,
+          elemIdx: elemIdxBySym[sym] ?? 0
+        });
+      });
+      // Basic-mode bonds: center-to-each-atom, order 1 (drawn as straight lines from first atom)
+      // Actually in the existing code, bonds go from each atom to molecule center (cx,cy),
+      // not between atoms. We'll replicate that by adding a virtual center atom at index -1.
+      // To keep the bond representation consistent, we'll encode basic-mode bonds differently
+      // in draw() using the molecule center coords directly (not atom-to-atom).
+    }
+    return { atoms, bonds, basicMode: true };
   }
 
   // ── Main draw ─────────────────────────────────────────────────────────────
@@ -253,7 +355,9 @@ const Particulate = (() => {
     const transparent = isChecked('pd-transparent');
     const randomness  = numVal('pd-random-range',     50) / 100;
     const bondThick   = numVal('pd-bond-thick-range', 15) / 10;
-    const bondLen     = numVal('pd-bond-len-range',   90) / 100;
+    const bondLen     = numVal('pd-bond-len-range',  100) / 100;
+    const spacing     = numVal('pd-spacing-range',    20) / 100;  // 0..1.5 range
+    const advanced    = isChecked('pd-advanced-mode');
 
     canvas.width  = Math.round(BW * zoom);
     canvas.height = Math.round(BH * zoom);
@@ -268,16 +372,15 @@ const Particulate = (() => {
     const zt = ZONE.t * zoom, zb = ZONE.b * zoom;
     const zw = zr - zl, zh = zb - zt;
     const N  = substances.length;
+    const baseR = atomR * zoom;  // reference radius in pixels, used throughout
 
-    // ── Round-robin guaranteed placement ─────────────────────────────────
-    // Each substance gets its own RNG stream so they don't compete for positions
     const rngs     = substances.map((_, si) => makeRng(si * 9999 + countPerSub * 7 + Math.round(atomR)));
     const cols     = Math.max(2, Math.ceil(Math.sqrt(countPerSub * 1.5)));
     const rows     = Math.max(2, Math.ceil(countPerSub / cols) + 1);
     const cellW    = zw / cols;
     const cellH    = zh / rows;
-    const placed   = [];
-    const allPos   = [];
+    const placed   = [];      // { x, y, r } for overlap testing
+    const molecules = [];     // { subIdx, cx, cy, rotation, layout }
     const counts   = new Array(N).fill(0);
     const attempts = new Array(N).fill(0);
     const MAX_ATT  = 8000;
@@ -305,59 +408,74 @@ const Particulate = (() => {
         const cy     = Math.max(zt + 10, Math.min(zb - 10, baseY + jy));
         const molRot = randomness * (rng() * 2 - 1) * Math.PI;
 
-        const nAtoms   = sub.atoms.length;
         const maxMult  = Math.max(...sub.sizeMults);
-        const bondDist = atomR * zoom * maxMult * 1.9;
-        const mAtoms   = [];
+        const layout   = buildMoleculeLayout(sub, advanced, baseR * maxMult, molRot);
 
-        if (nAtoms === 1) {
-          mAtoms.push({ x: cx, y: cy });
-        } else {
-          for (let ai = 0; ai < nAtoms; ai++) {
-            const angle = molRot + (ai / nAtoms) * Math.PI * 2;
-            mAtoms.push({ x: cx + bondDist * Math.cos(angle), y: cy + bondDist * Math.sin(angle) });
-          }
-        }
+        // Compute absolute atom positions for this molecule
+        const mAtoms = layout.atoms.map(a => ({
+          x: cx + a.x,
+          y: cy + a.y,
+          elemIdx: a.elemIdx,
+          symbol: a.symbol
+        }));
 
-        const inBounds = mAtoms.every((a, ai) => {
-          const r2 = atomR * zoom * sub.sizeMults[ai] * 1.3;
+        // Bounds check — each atom must be inside the zone with its scaled radius
+        const inBounds = mAtoms.every(a => {
+          const r2 = baseR * sub.sizeMults[a.elemIdx] * 1.2;
           return a.x - r2 > zl && a.x + r2 < zr && a.y - r2 > zt && a.y + r2 < zb;
         });
         if (!inBounds) continue;
 
+        // Overlap check — spacing multiplier (1 + spacing) adds extra gap
         const overlaps = mAtoms.some(a => {
-          const r2 = atomR * zoom * maxMult * 1.05;
-          return placed.some(p => Math.hypot(a.x - p.x, a.y - p.y) < r2 + p.r);
+          const myR = baseR * sub.sizeMults[a.elemIdx];
+          return placed.some(p => {
+            const minDist = (myR + p.r) * (1 + spacing);
+            return Math.hypot(a.x - p.x, a.y - p.y) < minDist;
+          });
         });
         if (overlaps) continue;
 
-        mAtoms.forEach((a, ai) => {
-          const r2 = atomR * zoom * sub.sizeMults[ai];
+        mAtoms.forEach(a => {
+          const r2 = baseR * sub.sizeMults[a.elemIdx];
           placed.push({ x: a.x, y: a.y, r: r2 });
-          allPos.push({ x: a.x, y: a.y, subIdx: si, atomIdx: ai,
-                        molId: molIdx, cx, cy, rotation: molRot });
         });
+        molecules.push({ subIdx: si, cx, cy, rotation: molRot, mAtoms, layout });
         counts[si]++;
       }
     }
 
-    // Draw bonds (solid)
-    const byMol = {};
-    allPos.forEach(p => {
-      const key = `${p.subIdx}-${p.molId}`;
-      (byMol[key] = byMol[key] || []).push(p);
-    });
-    Object.values(byMol).forEach(atoms => {
-      if (atoms.length < 2) return;
-      const { cx, cy } = atoms[0];
-      atoms.forEach(a => drawBond(a.x, a.y, cx, cy, bondThick, bondLen));
+    // ── Draw bonds ────────────────────────────────────────────────────────
+    molecules.forEach(mol => {
+      const sub = substances[mol.subIdx];
+      if (mol.layout.basicMode) {
+        // Basic mode: center-to-atom bonds, order 1
+        if (mol.mAtoms.length < 2) return;
+        mol.mAtoms.forEach(a => {
+          drawBond(a.x, a.y, mol.cx, mol.cy, bondThick, bondLen, 1);
+        });
+      } else {
+        // Advanced mode: explicit bonds from layout
+        mol.layout.bonds.forEach(b => {
+          const a1 = mol.mAtoms[b.i], a2 = mol.mAtoms[b.j];
+          if (!a1 || !a2) return;
+          drawBond(a1.x, a1.y, a2.x, a2.y, bondThick, bondLen, b.order);
+        });
+      }
     });
 
-    // Draw atoms
-    allPos.forEach(p => {
-      const sub = substances[p.subIdx];
-      const r   = atomR * zoom * sub.sizeMults[p.atomIdx];
-      drawShape(p.x, p.y, r, sub.shapes[p.atomIdx], sub.colors[p.atomIdx], p.rotation);
+    // ── Draw atoms (shape + optional symbol) ─────────────────────────────
+    molecules.forEach(mol => {
+      const sub = substances[mol.subIdx];
+      mol.mAtoms.forEach(a => {
+        const r    = baseR * sub.sizeMults[a.elemIdx];
+        const clr  = sub.colors[a.elemIdx];
+        const shp  = sub.shapes[a.elemIdx];
+        drawShape(a.x, a.y, r, shp, clr, mol.rotation);
+        if (advanced) {
+          drawSymbol(a.x, a.y, r, a.symbol);
+        }
+      });
     });
 
     buildLegend();
@@ -402,9 +520,11 @@ const Particulate = (() => {
   bindSliderWithInput('pd-random-range',     'pd-random-num',     draw);
   bindSliderWithInput('pd-bond-thick-range', 'pd-bond-thick-num', draw);
   bindSliderWithInput('pd-bond-len-range',   'pd-bond-len-num',   draw);
+  bindSliderWithInput('pd-spacing-range',    'pd-spacing-num',    draw);
   document.getElementById('pd-transparent').addEventListener('change', () => {
     updateBgClass('pd-checker', isChecked('pd-transparent')); draw();
   });
+  document.getElementById('pd-advanced-mode').addEventListener('change', draw);
 
   const EXAMPLES = {
     element: 'Na', diatomic: 'O2', compound: 'H2O',
